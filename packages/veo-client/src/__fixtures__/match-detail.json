@@ -1,0 +1,67 @@
+{
+ "id": "00000000-0000-0000-0000-000000000001",
+ "identifier": "00000000-0000-0000-0000-000000000001",
+ "recordings": [
+  {
+   "identifier": "00000000-0000-0000-0000-000000000001"
+  }
+ ],
+ "slug": "example-slug",
+ "start": "2026-10-03T10:52:55.939255+02:00",
+ "end": "2026-10-03T12:28:17.976592+02:00",
+ "duration": 5723.0,
+ "type": "",
+ "sport": "football",
+ "own_team_home_or_away": "home",
+ "opponent_team_name": "Name opponent_team_name",
+ "opponent_short_name_display": "Name opponent_short_name_display",
+ "own_team_color": "red",
+ "opponent_team_color": "green",
+ "has_analytics_enabled": true,
+ "has_events_enabled": true,
+ "has_tracking_data": false,
+ "has_momentum_data": false,
+ "has_playermoments_enabled": true,
+ "analytics_version": "2",
+ "processing_status": {},
+ "is_accessible": true,
+ "team": {
+  "id": "00000000-0000-0000-0000-000000000002",
+  "name": "Name name",
+  "slug": "example-slug",
+  "speed_zones": [
+   {
+    "zone": 1,
+    "name": "Name name",
+    "lower_bound_kmh": 0.0,
+    "upper_bound_kmh": 7.0
+   },
+   {
+    "zone": 2,
+    "name": "Name name",
+    "lower_bound_kmh": 7.0,
+    "upper_bound_kmh": 13.0
+   },
+   {
+    "zone": 3,
+    "name": "Name name",
+    "lower_bound_kmh": 13.0,
+    "upper_bound_kmh": 19.0
+   },
+   {
+    "zone": 4,
+    "name": "Name name",
+    "lower_bound_kmh": 19.0,
+    "upper_bound_kmh": 23.0
+   },
+   {
+    "zone": 5,
+    "name": "Name name",
+    "lower_bound_kmh": 23.0,
+    "upper_bound_kmh": null
+   }
+  ],
+  "hsr_threshold_kmh": 19.0,
+  "sprint_threshold_kmh": 23.0
+ }
+}

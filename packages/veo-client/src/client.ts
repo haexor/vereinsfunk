@@ -8,11 +8,17 @@ import { veoRequest, type VeoHttpOptions } from './http.js'
 
 const API_BASE = 'https://app.veo.co/api/app'
 
-/** GET/POST gegen die Veo-API; 401/403 bedeuten ein abgelaufenes Token, andere Fehler upstream_error. */
-async function veoApi(accessToken: string, path: string, init: RequestInit, options: VeoHttpOptions): Promise<{ status: number; json: unknown }> {
-  const response = await veoRequest(`${API_BASE}${path}`, {
+// Wie die Veo-Web-App selbst; ohne diese Kennung lehnt Veo manche Analyse-Endpunkte ab.
+export const VEO_APP_HEADERS: Readonly<Record<string, string>> = { 'Veo-App-Id': 'hazard', 'veo-agent': 'veo:svc:web-app' }
+
+/**
+ * GET/POST gegen die Veo-API; 401/403 bedeuten ein abgelaufenes Token, andere Fehler upstream_error.
+ * `path` ist relativ zu /api/app; eine volle URL (Spec 002: /api/mes/v2) wird so verwendet.
+ */
+export async function veoApi(accessToken: string, path: string, init: RequestInit, options: VeoHttpOptions): Promise<{ status: number; json: unknown }> {
+  const response = await veoRequest(path.startsWith('https://') ? path : `${API_BASE}${path}`, {
     ...init,
-    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json', ...init.headers },
+    headers: { authorization: `Bearer ${accessToken}`, 'content-type': 'application/json', ...VEO_APP_HEADERS, ...init.headers },
   }, options)
   if (response.status === 401 || response.status === 403) {
     throw new VeoError('auth_expired', `Veo API rejected the token: ${init.method ?? 'GET'} ${path.split('?')[0]}`, response.status)
@@ -28,14 +34,14 @@ async function veoApi(accessToken: string, path: string, init: RequestInit, opti
 }
 
 /** Wie veoApi, wirft aber bei jedem Fehlerstatus. */
-async function veoApiOk(accessToken: string, path: string, init: RequestInit, options: VeoHttpOptions): Promise<unknown> {
+export async function veoApiOk(accessToken: string, path: string, init: RequestInit, options: VeoHttpOptions): Promise<unknown> {
   const result = await veoApi(accessToken, path, init, options)
   if (result.status >= 300) throw new VeoError('upstream_error', `Veo API request failed: ${init.method ?? 'GET'} ${path.split('?')[0]} -> ${result.status}`, result.status)
   return result.json
 }
 
 /** Prueft eine Antwort gegen ihr Schema; eine geaenderte Form ergibt upstream_changed. */
-function parseOrChanged<T>(schema: z.ZodType<T>, json: unknown, what: string): T {
+export function parseOrChanged<T>(schema: z.ZodType<T>, json: unknown, what: string): T {
   const parsed = schema.safeParse(json)
   if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo ${what} response shape`)
   return parsed.data
@@ -194,49 +200,82 @@ export async function fetchTeamStats(accessToken: string, params: { veoTeamId: s
 
 // --- Spielerwerte je Spiel ------------------------------------------------------------------------
 
-// Die gespeicherten Spielerwerte (playerboard 004, research.md §3); alles andere wird verworfen. Veo
-// liefert je Wert keine Kategorie mehr, sie wird hier zugeordnet.
-export const CURATED_PLAYER_STATS: Readonly<Record<string, 'physical' | 'attacking'>> = {
+export type VeoPlayerStatCategory = 'general' | 'physical' | 'attacking' | 'distribution' | 'defending' | 'set_pieces' | 'goalkeeping'
+
+// Spec 002 (research.md R-07): alle Spielerwerte, die Veo liefert, mit den Gruppen der Veo-Ansichten
+// (Inventar §2.1.5). Veo liefert je Wert keine Kategorie mehr, sie wird hier zugeordnet; unbekannte
+// Typen werden verworfen, damit eine neue Veo-Kennzahl nicht ungeprueft in der Anzeige landet.
+// seconds_played_total bleibt "physical" wie seit Paket 053 gespeichert.
+export const CURATED_PLAYER_STATS: Readonly<Record<string, VeoPlayerStatCategory>> = {
+  matches_total: 'general',
+  starts_total: 'general',
+  captaincies_total: 'general',
+  player_of_the_match_total: 'general',
   distance_total_meters: 'physical',
   sprints_total: 'physical',
   top_speed_kmh: 'physical',
   average_speed_kmh: 'physical',
   high_intensity_runs_total: 'physical',
   seconds_played_total: 'physical',
-  football_shots_total: 'attacking',
   football_goal_total: 'attacking',
+  football_assist_total: 'attacking',
   football_goal_involvement_total: 'attacking',
+  football_shots_total: 'attacking',
+  football_attempts_total: 'attacking',
+  football_dribble_total: 'attacking',
+  football_passes_total: 'distribution',
+  football_passes_completed_total: 'distribution',
+  football_passes_unsuccessful_total: 'distribution',
+  football_tackle_total: 'defending',
+  football_duel_total: 'defending',
+  football_interception_total: 'defending',
+  football_loose_total: 'defending',
+  football_possession_won_total: 'defending',
+  football_corner_total: 'set_pieces',
+  football_free_kick_total: 'set_pieces',
+  football_throw_in_total: 'set_pieces',
+  football_foul_total: 'set_pieces',
+  football_goal_kick_total: 'set_pieces',
+  football_penalty_total: 'set_pieces',
+  football_save_total: 'goalkeeping',
 }
+
+// Rueckennummer als Ziffernfolge; das negative Lookahead verhindert, dass "$" vor einem
+// Zeilenumbruch passt.
+const JerseySchema = z.string().regex(/^\d+(?![\s\S])/)
+
+const PeriodValueSchema = z.object({ period: z.number().int().min(1), value: z.number() })
 
 const PlayerStatsSchema = z.object({
   items: z.array(z.object({
-    // Rueckennummer als Ziffernfolge; das negative Lookahead verhindert, dass "$" vor einem
-    // Zeilenumbruch passt.
-    jersey_number: z.string().regex(/^\d+(?![\s\S])/),
-    stats: z.array(z.object({ type: z.string(), value: z.number() })),
+    // "jersey_only" (keine Veo-Aufstellung) oder "identified"; ohne Nummer laesst sich die Zeile
+    // nicht dem Kader zuordnen und wird verworfen.
+    player: z.object({ type: z.string(), jersey_number: JerseySchema.nullable().optional() }),
+    stats: z.array(z.object({ type: z.string(), value: z.number(), periods: z.array(PeriodValueSchema) })),
   })),
 })
 
 export interface VeoPlayerStats {
   jerseyNumber: number
-  stats: { statType: string; category: 'physical' | 'attacking'; value: number }[]
+  stats: { statType: string; category: VeoPlayerStatCategory; value: number; periodValues: { period: number; value: number }[] }[]
 }
 
 /**
- * Spielerwerte aus analysis/stats (group_by player) nach Rueckennummer. Nur die kuratierten Werte;
- * doppelte Eintraege derselben Nummer und desselben Werts behalten das erste Vorkommen. Die
- * Zuordnung zum Kader ist Sache des Syncs (Rueckennummer kann unbekannt sein).
+ * Spielerwerte aus analysis/stats (type match_all_players) nach Rueckennummer, mit Werten je
+ * Halbzeit. Nur die kuratierten Werte; doppelte Eintraege derselben Nummer und desselben Werts
+ * behalten das erste Vorkommen. Die Zuordnung zum Kader ist Sache des Syncs.
  */
 export function parsePlayerStats(json: unknown): VeoPlayerStats[] {
   const byJersey = new Map<number, Map<string, VeoPlayerStats['stats'][number]>>()
   for (const item of parseOrChanged(PlayerStatsSchema, json, 'player stats').items) {
-    const jerseyNumber = Number.parseInt(item.jersey_number, 10)
+    if (item.player.jersey_number == null) continue
+    const jerseyNumber = Number.parseInt(item.player.jersey_number, 10)
     if (!Number.isSafeInteger(jerseyNumber)) continue
     const stats = byJersey.get(jerseyNumber) ?? new Map()
     for (const stat of item.stats) {
       const category = Object.prototype.hasOwnProperty.call(CURATED_PLAYER_STATS, stat.type) ? CURATED_PLAYER_STATS[stat.type] : undefined
       if (!category || stats.has(stat.type)) continue
-      stats.set(stat.type, { statType: stat.type, category, value: stat.value })
+      stats.set(stat.type, { statType: stat.type, category, value: stat.value, periodValues: stat.periods })
     }
     byJersey.set(jerseyNumber, stats)
   }
@@ -244,14 +283,13 @@ export function parsePlayerStats(json: unknown): VeoPlayerStats[] {
 }
 
 /**
- * POST analysis/stats je Spieler fuer genau ein Spiel. Veo fasst bei group_by player ueber alle
- * uebergebenen Spiele zusammen ("cross_match"); fuer Werte je Spiel deshalb ein Aufruf je Spiel.
- * team_id ist Pflicht (sonst 400, playerboard 2026-09-25).
+ * POST analysis/stats je Spieler fuer genau ein Spiel, mit Werten je Halbzeit (match_all_players,
+ * wie Veos Spielerübersicht; research.md R-07). team_id ist Pflicht.
  */
 export async function fetchPlayerStats(accessToken: string, params: { veoTeamId: string; veoMatchId: string }, options: VeoHttpOptions = {}): Promise<VeoPlayerStats[]> {
   const json = await veoApiOk(accessToken, '/analysis/stats/', {
     method: 'POST',
-    body: JSON.stringify({ type: 'cross_match', team_id: params.veoTeamId, group_by: 'player', match_ids: [params.veoMatchId] }),
+    body: JSON.stringify({ type: 'match_all_players', match_id: params.veoMatchId, team_id: params.veoTeamId }),
   }, options)
   return parsePlayerStats(json)
 }

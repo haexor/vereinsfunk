@@ -1,0 +1,26 @@
+[
+ {
+  "public_identifier": "00000000-0000-0000-0000-000000000003",
+  "timeframe": [
+   605,
+   2573
+  ],
+  "own_side": "left",
+  "name": "Name name",
+  "user_modified": null,
+  "is_confirmed": false,
+  "duration": 1968
+ },
+ {
+  "public_identifier": "00000000-0000-0000-0000-000000000004",
+  "timeframe": [
+   3268,
+   5441
+  ],
+  "own_side": "right",
+  "name": "Name name",
+  "user_modified": null,
+  "is_confirmed": false,
+  "duration": 2173
+ }
+]

@@ -1,0 +1,581 @@
+{
+ "version": 1,
+ "shot_details": [
+  {
+   "name": "Name name",
+   "timestamp": 651.317,
+   "side": "left",
+   "location": [
+    0.8263948664945715,
+    0.2699491851347912
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 663.329,
+   "side": "left",
+   "location": [
+    0.6667936476926049,
+    0.6236723797386718
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 730.33,
+   "side": "left",
+   "location": [
+    0.6218661981470445,
+    0.37465624711810663
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 793.459,
+   "side": "left",
+   "location": [
+    0.7760016579657008,
+    0.3427724371136441
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 945.344,
+   "side": "left",
+   "location": [
+    0.4595589620926801,
+    0.5086540123882421
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 975.107,
+   "side": "left",
+   "location": [
+    0.6777581462511909,
+    0.6472921971513119
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1013.813,
+   "side": "left",
+   "location": [
+    0.7001965878056544,
+    0.6281914691040857
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1126.726,
+   "side": "left",
+   "location": [
+    0.44177084693721697,
+    0.2878576037267118
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1224.156,
+   "side": "left",
+   "location": [
+    0.8260447883350964,
+    0.6134506071813758
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1325.724,
+   "side": "left",
+   "location": [
+    0.871052816479975,
+    0.5288476965493683
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1360.292,
+   "side": "left",
+   "location": [
+    0.9571645162763638,
+    0.6304201264084243
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1397.663,
+   "side": "left",
+   "location": [
+    0.7943737768659405,
+    0.4547057231369751
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1421.82,
+   "side": "left",
+   "location": [
+    0.7279641773347681,
+    0.4545949091778272
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1476.008,
+   "side": "left",
+   "location": [
+    0.760705971250347,
+    0.43208055599071016
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1504.036,
+   "side": "left",
+   "location": [
+    0.4021520785256928,
+    0.37707022933038586
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1528.46,
+   "side": "left",
+   "location": [
+    0.7137381991218118,
+    0.5583418448447413
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1573.038,
+   "side": "left",
+   "location": [
+    0.7042298122768489,
+    0.5572702342663881
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1593.725,
+   "side": "left",
+   "location": [
+    0.6092222359601189,
+    0.46207301739798506
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1731.463,
+   "side": "left",
+   "location": [
+    0.6087741097378682,
+    0.4010818239439551
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1814.479,
+   "side": "left",
+   "location": [
+    0.6186467584441689,
+    0.5419979956227324
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1835.3,
+   "side": "left",
+   "location": [
+    0.8509036217935186,
+    0.5165558549607678
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1883.348,
+   "side": "left",
+   "location": [
+    0.6283432087477516,
+    0.4543436267284755
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 1919.651,
+   "side": "left",
+   "location": [
+    0.6207922139773059,
+    0.4780558770905101
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2093.692,
+   "side": "left",
+   "location": [
+    0.5434977800705854,
+    0.33652290454282713
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2199.264,
+   "side": "left",
+   "location": [
+    0.8777822059743545,
+    0.663789546253682
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2239.971,
+   "side": "left",
+   "location": [
+    0.8365541602244967,
+    0.662006721910418
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2280.145,
+   "side": "left",
+   "location": [
+    0.6769331749747781,
+    0.6656525910661263
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2349.948,
+   "side": "left",
+   "location": [
+    0.6617971588583553,
+    0.43994464463452604
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2453.651,
+   "side": "left",
+   "location": [
+    0.8311135764054304,
+    0.5913890827352578
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2494.625,
+   "side": "left",
+   "location": [
+    0.7970487055865553,
+    0.40344978365310985
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2542.407,
+   "side": "left",
+   "location": [
+    0.6503259344661937,
+    0.3485383335074899
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 2566.164,
+   "side": "left",
+   "location": [
+    0.7792941822725183,
+    0.38092515063406346
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3323.72,
+   "side": "right",
+   "location": [
+    0.7508618053905467,
+    0.5160050837703403
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3380.043,
+   "side": "right",
+   "location": [
+    0.5598630469904468,
+    0.7799529578600111
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3407.671,
+   "side": "right",
+   "location": [
+    0.28303172015676314,
+    0.5562070857132126
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3472.002,
+   "side": "right",
+   "location": [
+    0.7617418410012086,
+    0.5269769177230675
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3506.703,
+   "side": "right",
+   "location": [
+    0.278009440564462,
+    0.46824116121783466
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3580.644,
+   "side": "right",
+   "location": [
+    0.38854523172565536,
+    0.5139154887233767
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3634.564,
+   "side": "right",
+   "location": [
+    0.5534950342832827,
+    0.5173595144983777
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3823.687,
+   "side": "right",
+   "location": [
+    0.5661928985633102,
+    0.6390683849754422
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3853.183,
+   "side": "right",
+   "location": [
+    0.2834180252224791,
+    0.5435252481844676
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 3966.229,
+   "side": "right",
+   "location": [
+    0.35687654158648324,
+    0.3319804806005214
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4003.733,
+   "side": "right",
+   "location": [
+    0.39506584455986987,
+    0.6157637531592614
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4181.377,
+   "side": "right",
+   "location": [
+    0.41872194234062643,
+    0.3007162522507534
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4202.198,
+   "side": "right",
+   "location": [
+    0.4556213342226469,
+    0.30341435188903443
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4221.417,
+   "side": "right",
+   "location": [
+    0.6444198064823422,
+    0.3270368569229697
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4313.509,
+   "side": "right",
+   "location": [
+    0.61284821173724,
+    0.7054621862347902
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4392.255,
+   "side": "right",
+   "location": [
+    0.4605782363929001,
+    0.5618714879965216
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4452.715,
+   "side": "right",
+   "location": [
+    0.5718433997210335,
+    0.30312962754303385
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4505.167,
+   "side": "right",
+   "location": [
+    0.4940987755270565,
+    0.482305110708174
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4612.741,
+   "side": "right",
+   "location": [
+    0.4515223265773031,
+    0.3304802078004036
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4700.696,
+   "side": "right",
+   "location": [
+    0.739506349844091,
+    0.48649534107043046
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4741.537,
+   "side": "right",
+   "location": [
+    0.3249449089461682,
+    0.405837307540661
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4808.671,
+   "side": "right",
+   "location": [
+    0.5633774925680721,
+    0.5700317564408239
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4907.169,
+   "side": "right",
+   "location": [
+    0.32650383996747734,
+    0.41813236767332307
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4940.135,
+   "side": "right",
+   "location": [
+    0.33899463204776537,
+    0.393267946492967
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 4950.145,
+   "side": "right",
+   "location": [
+    0.5214769637125258,
+    0.4728165198215396
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5001.93,
+   "side": "right",
+   "location": [
+    0.4416035138643705,
+    0.45967152732412897
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5075.604,
+   "side": "right",
+   "location": [
+    0.6368548792172102,
+    0.7331723860098885
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5122.184,
+   "side": "right",
+   "location": [
+    0.40682887259651634,
+    0.46891000634293545
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5221.75,
+   "side": "left",
+   "location": [
+    0.7777113489076203,
+    0.5232483660250489
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5261.123,
+   "side": "right",
+   "location": [
+    0.5120059505307296,
+    0.37349617861511164
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5301.963,
+   "side": "right",
+   "location": [
+    0.3984103343066047,
+    0.48152081836722815
+   ]
+  },
+  {
+   "name": "Name name",
+   "timestamp": 5420.081,
+   "side": "right",
+   "location": [
+    0.6739489949982742,
+    0.532540668873828
+   ]
+  }
+ ]
+}

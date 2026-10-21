@@ -1,0 +1,3595 @@
+{
+ "match": {
+  "match_id": "00000000-0000-0000-0000-000000000001",
+  "slug": "example-slug",
+  "title": "Name title",
+  "kick_off": "2026-10-03T10:52:55.939+02:00",
+  "type": null
+ },
+ "club": {
+  "club_id": "00000000-0000-0000-0000-000000000083",
+  "slug": "example-slug",
+  "name": "Name name"
+ },
+ "teams": {
+  "own_side": "home",
+  "home": {
+   "team_id": "00000000-0000-0000-0000-000000000002",
+   "name": "Name name",
+   "short_name": "Name short_name",
+   "crest_url": "example-crest_url",
+   "color": "red"
+  },
+  "away": {
+   "team_id": null,
+   "name": "Name name",
+   "short_name": "Name short_name",
+   "crest_url": null,
+   "color": "green"
+  }
+ },
+ "lineup": {
+  "formation": "",
+  "formation_name": "Name formation_name",
+  "team_captain": [],
+  "player_of_the_match": [],
+  "is_complete": false,
+  "formation_positions": [],
+  "positions_compact": ""
+ },
+ "score": {
+  "full_time": {
+   "home": 26,
+   "away": 0
+  },
+  "source": "aggregated"
+ },
+ "events": [
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballShot",
+   "id": "00000000-0000-0000-0000-000000000026",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 125499,
+   "player_id": null,
+   "player_jersey": "16",
+   "team": "Own",
+   "video_time_ms": 730499,
+   "x": 0.8172,
+   "z": 0.3656
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballShot",
+   "id": "00000000-0000-0000-0000-000000000025",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 283199,
+   "player_id": null,
+   "player_jersey": "18",
+   "team": "Own",
+   "video_time_ms": 888199,
+   "x": 0.9492,
+   "z": 0.6544
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballGoal",
+   "id": "00000000-0000-0000-0000-000000000058",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 341279,
+   "player_id": null,
+   "player_jersey": null,
+   "team": "Own",
+   "video_time_ms": 946279,
+   "x": null,
+   "z": null
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballShot",
+   "id": "00000000-0000-0000-0000-000000000027",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 409133,
+   "player_id": null,
+   "player_jersey": "9",
+   "team": "Own",
+   "video_time_ms": 1014133,
+   "x": 0.877,
+   "z": 0.6461
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballGoal",
+   "id": "00000000-0000-0000-0000-000000000059",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 522927,
+   "player_id": null,
+   "player_jersey": null,
+   "team": "Own",
+   "video_time_ms": 1127927,
+   "x": null,
+   "z": null
+  },
+  {
+   "attributes": [
+    {
+     "label": "outcome",
+     "type": "string",
+     "value": "goal"
+    }
+   ],
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballShot",
+   "id": "00000000-0000-0000-0000-000000000028",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": 1,
+   "period_id": 1,
+   "period_time_ms": 619233,
+   "player_id": null,
+   "player_jersey": "18",
+   "team": "Own",
+   "video_time_ms": 1224233,
+   "x": 0.934,
+   "z": 0.6187
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballGoal",
+   "id": "00000000-0000-0000-0000-00000000005a",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 619824,
+   "player_id": null,
+   "player_jersey": "18",
+   "team": "Own",
+   "video_time_ms": 1224824,
+   "x": null,
+   "z": null
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballGoal",
+   "id": "00000000-0000-0000-0000-00000000005b",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 756093,
+   "player_id": null,
+   "player_jersey": null,
+   "team": "Own",
+   "video_time_ms": 1361093,
+   "x": null,
+   "z": null
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballGoal",
+   "id": "00000000-0000-0000-0000-00000000005c",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 817755,
+   "player_id": null,
+   "player_jersey": null,
+   "team": "Own",
+   "video_time_ms": 1422755,
+   "x": null,
+   "z": null
+  },
+  {
+   "attributes": null,
+   "created_at": "2026-10-03T14:40:46.510Z",
+   "event_type": "FootballShot",
+   "id": "00000000-0000-0000-0000-000000000029",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "modified_at": null,
+   "outcome": null,
+   "period_id": 1,
+   "period_time_ms": 871566,
+   "player_id": null,
+   "player_jersey": "7",
+   "team": "Own",
+   "video_time_ms": 1476566,
+   "x": 0.9329,
+   "z": 0.4344
+  }
+ ],
+ "players": [],
+ "scorers": {
+  "home": [
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 341279
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 522927
+   },
+   {
+    "player_id": null,
+    "player_jersey": "18",
+    "period_number": 1,
+    "period_time_ms": 619824
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 756093
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 817755
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 924261
+   },
+   {
+    "player_id": null,
+    "player_jersey": "3",
+    "period_number": 1,
+    "period_time_ms": 1127798
+   },
+   {
+    "player_id": null,
+    "player_jersey": "18",
+    "period_number": 1,
+    "period_time_ms": 1230834
+   },
+   {
+    "player_id": null,
+    "player_jersey": "3",
+    "period_number": 1,
+    "period_time_ms": 1279416
+   },
+   {
+    "player_id": null,
+    "player_jersey": "16",
+    "period_number": 1,
+    "period_time_ms": 1315318
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 1490026
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 1594797
+   },
+   {
+    "player_id": null,
+    "player_jersey": "3",
+    "period_number": 1,
+    "period_time_ms": 1745615
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 1,
+    "period_time_ms": 1849585
+   },
+   {
+    "player_id": null,
+    "player_jersey": "9",
+    "period_number": 1,
+    "period_time_ms": 1961964
+   },
+   {
+    "player_id": null,
+    "player_jersey": "17",
+    "period_number": 2,
+    "period_time_ms": 56253
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 2,
+    "period_time_ms": 204536
+   },
+   {
+    "player_id": null,
+    "player_jersey": "10",
+    "period_number": 2,
+    "period_time_ms": 313711
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 2,
+    "period_time_ms": 555553
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 2,
+    "period_time_ms": 699297
+   },
+   {
+    "player_id": null,
+    "player_jersey": "13",
+    "period_number": 2,
+    "period_time_ms": 737068
+   },
+   {
+    "player_id": null,
+    "player_jersey": null,
+    "period_number": 2,
+    "period_time_ms": 953951
+   },
+   {
+    "player_id": null,
+    "player_jersey": "13",
+    "period_number": 2,
+    "period_time_ms": 1185516
+   },
+   {
+    "player_id": null,
+    "player_jersey": "13",
+    "period_number": 2,
+    "period_time_ms": 1541338
+   },
+   {
+    "player_id": null,
+    "player_jersey": "13",
+    "period_number": 2,
+    "period_time_ms": 2034764
+   },
+   {
+    "player_id": null,
+    "player_jersey": "2",
+    "period_number": 2,
+    "period_time_ms": 2152482
+   }
+  ],
+  "away": []
+ },
+ "periods": [
+  {
+   "id": "00000000-0000-0000-0000-000000000003",
+   "start_time": 605,
+   "end_time": 2573,
+   "own_side": "left",
+   "name": "Name name"
+  },
+  {
+   "id": "00000000-0000-0000-0000-000000000004",
+   "start_time": 3268,
+   "end_time": 5441,
+   "own_side": "right",
+   "name": "Name name"
+  }
+ ],
+ "view": "advanced",
+ "overview": {
+  "key_stats": {
+   "goals": {
+    "full_time": {
+     "own": 26,
+     "opponent": 0
+    },
+    "periods": [
+     {
+      "own": 15,
+      "opponent": 0,
+      "period_number": 1
+     },
+     {
+      "own": 11,
+      "opponent": 0,
+      "period_number": 2
+     }
+    ]
+   },
+   "total_attempts": {
+    "full_time": {
+     "own": 36,
+     "opponent": 1
+    },
+    "periods": [
+     {
+      "own": 13,
+      "opponent": 0,
+      "period_number": 1
+     },
+     {
+      "own": 23,
+      "opponent": 1,
+      "period_number": 2
+     }
+    ]
+   },
+   "corners": {
+    "full_time": {
+     "own": 23,
+     "opponent": 0
+    },
+    "periods": [
+     {
+      "own": 6,
+      "opponent": 0,
+      "period_number": 1
+     },
+     {
+      "own": 17,
+      "opponent": 0,
+      "period_number": 2
+     }
+    ]
+   },
+   "fouls": {
+    "full_time": {
+     "own": 13,
+     "opponent": 7
+    },
+    "periods": [
+     {
+      "own": 10,
+      "opponent": 3,
+      "period_number": 1
+     },
+     {
+      "own": 3,
+      "opponent": 4,
+      "period_number": 2
+     }
+    ]
+   },
+   "free_kicks": {
+    "full_time": {
+     "own": 6,
+     "opponent": 10
+    },
+    "periods": [
+     {
+      "own": 5,
+      "opponent": 9,
+      "period_number": 1
+     },
+     {
+      "own": 1,
+      "opponent": 1,
+      "period_number": 2
+     }
+    ]
+   },
+   "possession": {
+    "full_time": {
+     "own": 83.2,
+     "opponent": 16.8
+    },
+    "periods": [
+     {
+      "own": 83.1,
+      "opponent": 16.9,
+      "period_number": 1
+     },
+     {
+      "own": 83.2,
+      "opponent": 16.8,
+      "period_number": 2
+     }
+    ]
+   },
+   "successful_passes": {
+    "full_time": {
+     "own": 179,
+     "opponent": 54
+    },
+    "periods": [
+     {
+      "own": 97,
+      "opponent": 38,
+      "period_number": 1
+     },
+     {
+      "own": 82,
+      "opponent": 16,
+      "period_number": 2
+     }
+    ]
+   },
+   "passes": {
+    "full_time": {
+     "own": 255,
+     "opponent": 146
+    },
+    "periods": [
+     {
+      "own": 138,
+      "opponent": 92,
+      "period_number": 1
+     },
+     {
+      "own": 117,
+      "opponent": 54,
+      "period_number": 2
+     }
+    ]
+   },
+   "pass_accuracy": {
+    "full_time": {
+     "own": 70.2,
+     "opponent": 37.0
+    },
+    "periods": [
+     {
+      "own": 70.3,
+      "opponent": 41.3,
+      "period_number": 1
+     },
+     {
+      "own": 70.1,
+      "opponent": 29.6,
+      "period_number": 2
+     }
+    ]
+   }
+  }
+ },
+ "attacking": {
+  "goals": {
+   "full_time": {
+    "own": 26,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 15,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 11,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 11,
+     "match_count": 5
+    }
+   }
+  },
+  "assists": {
+   "full_time": {
+    "own": 0,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 0,
+     "match_count": 5
+    }
+   }
+  },
+  "total_shots": {
+   "full_time": {
+    "own": 36,
+    "opponent": 1
+   },
+   "periods": [
+    {
+     "own": 13,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 23,
+     "opponent": 1,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -3,
+     "match_count": 5
+    }
+   }
+  },
+  "dribbles": {
+   "full_time": {
+    "own": 13,
+    "opponent": 4
+   },
+   "periods": [
+    {
+     "own": 8,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 5,
+     "opponent": 4,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -3,
+     "match_count": 5
+    }
+   }
+  },
+  "shots_inside_box": {
+   "full_time": {
+    "own": 26,
+    "opponent": 1
+   },
+   "periods": [
+    {
+     "own": 13,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 13,
+     "opponent": 1,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -9,
+     "match_count": 5
+    }
+   }
+  },
+  "shots_outside_box": {
+   "full_time": {
+    "own": 10,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 10,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 6,
+     "match_count": 5
+    }
+   }
+  },
+  "goals_inside_box": {
+   "full_time": {
+    "own": 11,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 7,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 4,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 1,
+     "match_count": 5
+    }
+   }
+  },
+  "goals_outside_box": {
+   "full_time": {
+    "own": 3,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 3,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 3,
+     "match_count": 5
+    }
+   }
+  },
+  "conversion_rate_overall": {
+   "full_time": {
+    "own": 72.2,
+    "opponent": 0.0
+   },
+   "periods": [
+    {
+     "own": 115.4,
+     "opponent": 0.0,
+     "period_number": 1
+    },
+    {
+     "own": 47.8,
+     "opponent": 0.0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 35,
+     "match_count": 5
+    }
+   }
+  },
+  "conversion_rate_inside_box": {
+   "full_time": {
+    "own": 42.3,
+    "opponent": 0.0
+   },
+   "periods": [
+    {
+     "own": 53.8,
+     "opponent": 0.0,
+     "period_number": 1
+    },
+    {
+     "own": 30.8,
+     "opponent": 0.0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 10,
+     "match_count": 5
+    }
+   }
+  },
+  "conversion_rate_outside_box": {
+   "full_time": {
+    "own": 30.0,
+    "opponent": 0.0
+   },
+   "periods": [
+    {
+     "own": 0.0,
+     "opponent": 0.0,
+     "period_number": 1
+    },
+    {
+     "own": 30.0,
+     "opponent": 0.0,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": 27,
+     "match_count": 4
+    }
+   }
+  }
+ },
+ "defensive": {
+  "duels": {
+   "full_time": {
+    "own": 23,
+    "opponent": 17
+   },
+   "periods": [
+    {
+     "own": 14,
+     "opponent": 6,
+     "period_number": 1
+    },
+    {
+     "own": 9,
+     "opponent": 11,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -47,
+     "match_count": 5
+    }
+   }
+  },
+  "tackles": {
+   "full_time": {
+    "own": 14,
+    "opponent": 41
+   },
+   "periods": [
+    {
+     "own": 7,
+     "opponent": 20,
+     "period_number": 1
+    },
+    {
+     "own": 7,
+     "opponent": 21,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -18,
+     "match_count": 5
+    }
+   }
+  },
+  "recoveries": {
+   "full_time": {
+    "own": 4,
+    "opponent": 5
+   },
+   "periods": [
+    {
+     "own": 2,
+     "opponent": 3,
+     "period_number": 1
+    },
+    {
+     "own": 2,
+     "opponent": 2,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -10,
+     "match_count": 5
+    }
+   }
+  },
+  "interceptions": {
+   "full_time": {
+    "own": 23,
+    "opponent": 5
+   },
+   "periods": [
+    {
+     "own": 9,
+     "opponent": 3,
+     "period_number": 1
+    },
+    {
+     "own": 14,
+     "opponent": 2,
+     "period_number": 2
+    }
+   ],
+   "comparison": {
+    "full_time": {
+     "difference": -15,
+     "match_count": 5
+    }
+   }
+  }
+ },
+ "physical": {
+  "distance_total_meters": {
+   "full_time": {
+    "own": 42751,
+    "opponent": 29322
+   },
+   "periods": [
+    {
+     "own": 20242,
+     "opponent": 13088,
+     "period_number": 1
+    },
+    {
+     "own": 22509,
+     "opponent": 16234,
+     "period_number": 2
+    }
+   ]
+  },
+  "high_intensity_runs_total": {
+   "full_time": {
+    "own": 5,
+    "opponent": 5
+   },
+   "periods": [
+    {
+     "own": 1,
+     "opponent": 2,
+     "period_number": 1
+    },
+    {
+     "own": 4,
+     "opponent": 3,
+     "period_number": 2
+    }
+   ]
+  },
+  "sprints_total": {
+   "full_time": {
+    "own": 0,
+    "opponent": 0
+   },
+   "periods": [
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 0,
+     "opponent": 0,
+     "period_number": 2
+    }
+   ]
+  },
+  "top_speed_kmh": {
+   "full_time": {
+    "own": 20.21647071838379,
+    "opponent": 19.547090530395508
+   },
+   "periods": [
+    {
+     "own": 18.913772583007812,
+     "opponent": 19.547090530395508,
+     "period_number": 1
+    },
+    {
+     "own": 20.21647071838379,
+     "opponent": 19.528322219848633,
+     "period_number": 2
+    }
+   ]
+  },
+  "speed_zones": {
+   "status": "available",
+   "thresholds": {
+    "hsr_kmh": 19.0,
+    "sprint_kmh": 23.0
+   },
+   "bucket_seconds": 900.0,
+   "items": [
+    {
+     "start_ms": 605000,
+     "end_ms": 1505000,
+     "own": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 8091200,
+       "hsr_ms": 1600,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 8092800,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.98022933965994,
+       "hsr": 0.019770660340055358,
+       "sprint": 0.0
+      }
+     },
+     "opponent": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 7200800,
+       "hsr_ms": 3200,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 7204000,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.95558023320378,
+       "hsr": 0.04441976679622432,
+       "sprint": 0.0
+      }
+     },
+     "players": [
+      {
+       "team": "Own",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "3",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 899600,
+         "hsr_ms": 400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.95555555555555,
+         "hsr": 0.044444444444444446,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 898800,
+         "hsr_ms": 1200,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.86666666666666,
+         "hsr": 0.13333333333333333,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 890800,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 890800,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "12",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "16",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "18",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 636000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 636000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "3",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 99399,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 99399,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "4",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 228400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 228400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 642400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 642400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 572201,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 572201,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 121801,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 121801,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 530201,
+         "hsr_ms": 2400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 532601,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.54938124412084,
+         "hsr": 0.45061875587916655,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 734400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 734400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 793600,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 793600,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "12",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 336400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 336400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "18",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 233399,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 233399,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "start_ms": 1505000,
+     "end_ms": 2573000,
+     "own": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 9489401,
+       "hsr_ms": 400,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 9489801,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.99578494849365,
+       "hsr": 0.004215051506348763,
+       "sprint": 0.0
+      }
+     },
+     "opponent": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 8478999,
+       "hsr_ms": 1200,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 8480199,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.9858493886759,
+       "hsr": 0.014150611324097465,
+       "sprint": 0.0
+      }
+     },
+     "players": [
+      {
+       "team": "Own",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 965799,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 965799,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "3",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1067600,
+         "hsr_ms": 400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.9625468164794,
+         "hsr": 0.03745318352059925,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1029200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1029200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "12",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 926000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 926000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "16",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "18",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 713200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 713200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 517399,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 517399,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1068000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1068000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1046199,
+         "hsr_ms": 1200,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1047399,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.88543048064777,
+         "hsr": 0.11456951935222394,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "11",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 576601,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 576601,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1054400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1054400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "start_ms": 3268000,
+     "end_ms": 4168000,
+     "own": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 9334401,
+       "hsr_ms": 3200,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 9337601,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.96572995569204,
+       "hsr": 0.034270044307954474,
+       "sprint": 0.0
+      }
+     },
+     "opponent": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 7003200,
+       "hsr_ms": 1600,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 7004800,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.97715851987209,
+       "hsr": 0.02284148012791229,
+       "sprint": 0.0
+      }
+     },
+     "players": [
+      {
+       "team": "Own",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 894400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 894400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 706000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 706000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 897200,
+         "hsr_ms": 2800,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.68888888888888,
+         "hsr": 0.3111111111111111,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 29201,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 29201,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 891600,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 891600,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "11",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 561601,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 561601,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "13",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "16",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 492400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 492400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 899600,
+         "hsr_ms": 400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.95555555555555,
+         "hsr": 0.044444444444444446,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "18",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 651200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 651200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 6800,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 6800,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "3",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 585600,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 585600,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 163199,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 163199,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 184800,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 184800,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 727601,
+         "hsr_ms": 1600,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 729201,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.78058176003599,
+         "hsr": 0.2194182399640154,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 868799,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 868799,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 899200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 899200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "13",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 90000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 90000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "14",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 45601,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 45601,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "15",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 900000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 900000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "16",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 219200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 219200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 889200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 889200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "19",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 264799,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 264799,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      }
+     ]
+    },
+    {
+     "start_ms": 4168000,
+     "end_ms": 5441000,
+     "own": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 11083398,
+       "hsr_ms": 6000,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 11089398,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.94589426765998,
+       "hsr": 0.05410573234002423,
+       "sprint": 0.0
+      }
+     },
+     "opponent": {
+      "status": "measured",
+      "durations": {
+       "below_hsr_ms": 10136800,
+       "hsr_ms": 2800,
+       "sprint_ms": 0
+      },
+      "usable_player_ms": 10139600,
+      "excluded_player_ms": 0,
+      "percentages": {
+       "below_hsr": 99.97238549844175,
+       "hsr": 0.027614501558246872,
+       "sprint": 0.0
+      }
+     },
+     "players": [
+      {
+       "team": "Own",
+       "jersey_number": "2",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1259800,
+         "hsr_ms": 1600,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1261400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.87315680989377,
+         "hsr": 0.12684319010623119,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1269000,
+         "hsr_ms": 400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1269400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.96848904994485,
+         "hsr": 0.03151095005514416,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1267000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1267000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "7",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 394800,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 394800,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1263800,
+         "hsr_ms": 1600,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1265400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.87355776829462,
+         "hsr": 0.1264422317053896,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "9",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 393199,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 393199,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1236600,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1236600,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "11",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1105599,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1105599,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "13",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1272600,
+         "hsr_ms": 400,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1273000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.96857816182246,
+         "hsr": 0.031421838177533384,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Own",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1271000,
+         "hsr_ms": 2000,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1273000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.84289080911233,
+         "hsr": 0.15710919088766692,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "3",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1265400,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1265400,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "5",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1145199,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1145199,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "6",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 512601,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 512601,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "8",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1195400,
+         "hsr_ms": 1600,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1197000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.86633249791144,
+         "hsr": 0.1336675020885547,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "10",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1271800,
+         "hsr_ms": 1200,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1273000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 99.9057344854674,
+         "hsr": 0.09426551453260015,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "13",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 890800,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 890800,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "14",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1273000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1273000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "15",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 375000,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 375000,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      },
+      {
+       "team": "Opponent",
+       "jersey_number": "17",
+       "distribution": {
+        "status": "measured",
+        "durations": {
+         "below_hsr_ms": 1030200,
+         "hsr_ms": 0,
+         "sprint_ms": 0
+        },
+        "usable_player_ms": 1030200,
+        "excluded_player_ms": 0,
+        "percentages": {
+         "below_hsr": 100.0,
+         "hsr": 0.0,
+         "sprint": 0.0
+        }
+       }
+      }
+     ]
+    }
+   ]
+  }
+ },
+ "passing": {
+  "forward_passes": {
+   "full_time": {
+    "own": 77,
+    "opponent": 39
+   },
+   "periods": [
+    {
+     "own": 40,
+     "opponent": 24,
+     "period_number": 1
+    },
+    {
+     "own": 37,
+     "opponent": 15,
+     "period_number": 2
+    }
+   ]
+  },
+  "sideways_passes": {
+   "full_time": {
+    "own": 97,
+    "opponent": 29
+   },
+   "periods": [
+    {
+     "own": 52,
+     "opponent": 20,
+     "period_number": 1
+    },
+    {
+     "own": 45,
+     "opponent": 9,
+     "period_number": 2
+    }
+   ]
+  },
+  "backward_passes": {
+   "full_time": {
+    "own": 24,
+    "opponent": 27
+   },
+   "periods": [
+    {
+     "own": 13,
+     "opponent": 18,
+     "period_number": 1
+    },
+    {
+     "own": 11,
+     "opponent": 9,
+     "period_number": 2
+    }
+   ]
+  },
+  "successful_forward_passes": {
+   "full_time": {
+    "own": 66,
+    "opponent": 6
+   },
+   "periods": [
+    {
+     "own": 36,
+     "opponent": 4,
+     "period_number": 1
+    },
+    {
+     "own": 30,
+     "opponent": 2,
+     "period_number": 2
+    }
+   ]
+  },
+  "successful_sideways_passes": {
+   "full_time": {
+    "own": 90,
+    "opponent": 21
+   },
+   "periods": [
+    {
+     "own": 48,
+     "opponent": 16,
+     "period_number": 1
+    },
+    {
+     "own": 42,
+     "opponent": 5,
+     "period_number": 2
+    }
+   ]
+  },
+  "successful_backward_passes": {
+   "full_time": {
+    "own": 23,
+    "opponent": 27
+   },
+   "periods": [
+    {
+     "own": 13,
+     "opponent": 18,
+     "period_number": 1
+    },
+    {
+     "own": 10,
+     "opponent": 9,
+     "period_number": 2
+    }
+   ]
+  },
+  "forward_accuracy": {
+   "full_time": {
+    "own": 85.7,
+    "opponent": 15.4
+   },
+   "periods": [
+    {
+     "own": 90.0,
+     "opponent": 16.7,
+     "period_number": 1
+    },
+    {
+     "own": 81.1,
+     "opponent": 13.3,
+     "period_number": 2
+    }
+   ]
+  },
+  "sideways_accuracy": {
+   "full_time": {
+    "own": 92.8,
+    "opponent": 72.4
+   },
+   "periods": [
+    {
+     "own": 92.3,
+     "opponent": 80.0,
+     "period_number": 1
+    },
+    {
+     "own": 93.3,
+     "opponent": 55.6,
+     "period_number": 2
+    }
+   ]
+  },
+  "backward_accuracy": {
+   "full_time": {
+    "own": 95.8,
+    "opponent": 100.0
+   },
+   "periods": [
+    {
+     "own": 100.0,
+     "opponent": 100.0,
+     "period_number": 1
+    },
+    {
+     "own": 90.9,
+     "opponent": 100.0,
+     "period_number": 2
+    }
+   ]
+  },
+  "final_third_passes": {
+   "full_time": {
+    "own": 102,
+    "opponent": 4
+   },
+   "periods": [
+    {
+     "own": 69,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 33,
+     "opponent": 4,
+     "period_number": 2
+    }
+   ]
+  },
+  "successful_final_third_passes": {
+   "full_time": {
+    "own": 56,
+    "opponent": 1
+   },
+   "periods": [
+    {
+     "own": 38,
+     "opponent": 0,
+     "period_number": 1
+    },
+    {
+     "own": 18,
+     "opponent": 1,
+     "period_number": 2
+    }
+   ]
+  },
+  "final_third_accuracy": {
+   "full_time": {
+    "own": 54.9,
+    "opponent": 25.0
+   },
+   "periods": [
+    {
+     "own": 55.1,
+     "opponent": 0.0,
+     "period_number": 1
+    },
+    {
+     "own": 54.5,
+     "opponent": 25.0,
+     "period_number": 2
+    }
+   ]
+  },
+  "pass_locations": {
+   "defensive": {
+    "left": {
+     "passes": {
+      "full_time": {
+       "own": 7,
+       "opponent": 10
+      },
+      "periods": [
+       {
+        "own": 1,
+        "opponent": 8,
+        "period_number": 1
+       },
+       {
+        "own": 6,
+        "opponent": 2,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 6,
+       "opponent": 2
+      },
+      "periods": [
+       {
+        "own": 0,
+        "opponent": 2,
+        "period_number": 1
+       },
+       {
+        "own": 6,
+        "opponent": 0,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 85.7,
+       "opponent": 20.0
+      },
+      "periods": [
+       {
+        "own": 0.0,
+        "opponent": 25.0,
+        "period_number": 1
+       },
+       {
+        "own": 100.0,
+        "opponent": 0.0,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "middle": {
+     "passes": {
+      "full_time": {
+       "own": 19,
+       "opponent": 61
+      },
+      "periods": [
+       {
+        "own": 7,
+        "opponent": 45,
+        "period_number": 1
+       },
+       {
+        "own": 12,
+        "opponent": 16,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 18,
+       "opponent": 21
+      },
+      "periods": [
+       {
+        "own": 7,
+        "opponent": 15,
+        "period_number": 1
+       },
+       {
+        "own": 11,
+        "opponent": 6,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 94.7,
+       "opponent": 34.4
+      },
+      "periods": [
+       {
+        "own": 100.0,
+        "opponent": 33.3,
+        "period_number": 1
+       },
+       {
+        "own": 91.7,
+        "opponent": 37.5,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "right": {
+     "passes": {
+      "full_time": {
+       "own": 4,
+       "opponent": 9
+      },
+      "periods": [
+       {
+        "own": 1,
+        "opponent": 6,
+        "period_number": 1
+       },
+       {
+        "own": 3,
+        "opponent": 3,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 4,
+       "opponent": 0
+      },
+      "periods": [
+       {
+        "own": 1,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 3,
+        "opponent": 0,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 100.0,
+       "opponent": 0.0
+      },
+      "periods": [
+       {
+        "own": 100.0,
+        "opponent": 0.0,
+        "period_number": 1
+       },
+       {
+        "own": 100.0,
+        "opponent": 0.0,
+        "period_number": 2
+       }
+      ]
+     }
+    }
+   },
+   "middle": {
+    "left": {
+     "passes": {
+      "full_time": {
+       "own": 41,
+       "opponent": 4
+      },
+      "periods": [
+       {
+        "own": 24,
+        "opponent": 1,
+        "period_number": 1
+       },
+       {
+        "own": 17,
+        "opponent": 3,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 31,
+       "opponent": 0
+      },
+      "periods": [
+       {
+        "own": 21,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 10,
+        "opponent": 0,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 75.6,
+       "opponent": 0.0
+      },
+      "periods": [
+       {
+        "own": 87.5,
+        "opponent": 0.0,
+        "period_number": 1
+       },
+       {
+        "own": 58.8,
+        "opponent": 0.0,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "middle": {
+     "passes": {
+      "full_time": {
+       "own": 38,
+       "opponent": 44
+      },
+      "periods": [
+       {
+        "own": 15,
+        "opponent": 23,
+        "period_number": 1
+       },
+       {
+        "own": 23,
+        "opponent": 21,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 29,
+       "opponent": 23
+      },
+      "periods": [
+       {
+        "own": 14,
+        "opponent": 16,
+        "period_number": 1
+       },
+       {
+        "own": 15,
+        "opponent": 7,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 76.3,
+       "opponent": 52.3
+      },
+      "periods": [
+       {
+        "own": 93.3,
+        "opponent": 69.6,
+        "period_number": 1
+       },
+       {
+        "own": 65.2,
+        "opponent": 33.3,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "right": {
+     "passes": {
+      "full_time": {
+       "own": 32,
+       "opponent": 10
+      },
+      "periods": [
+       {
+        "own": 13,
+        "opponent": 7,
+        "period_number": 1
+       },
+       {
+        "own": 19,
+        "opponent": 3,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 26,
+       "opponent": 4
+      },
+      "periods": [
+       {
+        "own": 10,
+        "opponent": 3,
+        "period_number": 1
+       },
+       {
+        "own": 16,
+        "opponent": 1,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 81.2,
+       "opponent": 40.0
+      },
+      "periods": [
+       {
+        "own": 76.9,
+        "opponent": 42.9,
+        "period_number": 1
+       },
+       {
+        "own": 84.2,
+        "opponent": 33.3,
+        "period_number": 2
+       }
+      ]
+     }
+    }
+   },
+   "attacking": {
+    "left": {
+     "passes": {
+      "full_time": {
+       "own": 39,
+       "opponent": 1
+      },
+      "periods": [
+       {
+        "own": 23,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 16,
+        "opponent": 1,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 22,
+       "opponent": 1
+      },
+      "periods": [
+       {
+        "own": 14,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 8,
+        "opponent": 1,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 56.4,
+       "opponent": 100.0
+      },
+      "periods": [
+       {
+        "own": 60.9,
+        "opponent": 0.0,
+        "period_number": 1
+       },
+       {
+        "own": 50.0,
+        "opponent": 100.0,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "middle": {
+     "passes": {
+      "full_time": {
+       "own": 40,
+       "opponent": 2
+      },
+      "periods": [
+       {
+        "own": 35,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 5,
+        "opponent": 2,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 22,
+       "opponent": 0
+      },
+      "periods": [
+       {
+        "own": 18,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 4,
+        "opponent": 0,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 55.0,
+       "opponent": 0.0
+      },
+      "periods": [
+       {
+        "own": 51.4,
+        "opponent": 0.0,
+        "period_number": 1
+       },
+       {
+        "own": 80.0,
+        "opponent": 0.0,
+        "period_number": 2
+       }
+      ]
+     }
+    },
+    "right": {
+     "passes": {
+      "full_time": {
+       "own": 23,
+       "opponent": 1
+      },
+      "periods": [
+       {
+        "own": 11,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 12,
+        "opponent": 1,
+        "period_number": 2
+       }
+      ]
+     },
+     "successful_passes": {
+      "full_time": {
+       "own": 12,
+       "opponent": 0
+      },
+      "periods": [
+       {
+        "own": 6,
+        "opponent": 0,
+        "period_number": 1
+       },
+       {
+        "own": 6,
+        "opponent": 0,
+        "period_number": 2
+       }
+      ]
+     },
+     "accuracy": {
+      "full_time": {
+       "own": 52.2,
+       "opponent": 0.0
+      },
+      "periods": [
+       {
+        "own": 54.5,
+        "opponent": 0.0,
+        "period_number": 1
+       },
+       {
+        "own": 50.0,
+        "opponent": 0.0,
+        "period_number": 2
+       }
+      ]
+     }
+    }
+   }
+  },
+  "pass_strings": {
+   "full_time": {
+    "own": [
+     {
+      "length": 2,
+      "count": 23
+     },
+     {
+      "length": 3,
+      "count": 21
+     },
+     {
+      "length": 5,
+      "count": 3
+     },
+     {
+      "length": 6,
+      "count": 1
+     },
+     {
+      "length": 7,
+      "count": 1
+     }
+    ],
+    "opponent": [
+     {
+      "length": 2,
+      "count": 5
+     },
+     {
+      "length": 3,
+      "count": 2
+     },
+     {
+      "length": 4,
+      "count": 1
+     }
+    ]
+   },
+   "periods": [
+    {
+     "own": [
+      {
+       "length": 2,
+       "count": 9
+      },
+      {
+       "length": 3,
+       "count": 13
+      },
+      {
+       "length": 5,
+       "count": 2
+      },
+      {
+       "length": 6,
+       "count": 1
+      }
+     ],
+     "opponent": [
+      {
+       "length": 2,
+       "count": 4
+      },
+      {
+       "length": 3,
+       "count": 1
+      },
+      {
+       "length": 4,
+       "count": 1
+      }
+     ],
+     "period_number": 1
+    },
+    {
+     "own": [
+      {
+       "length": 2,
+       "count": 14
+      },
+      {
+       "length": 3,
+       "count": 8
+      },
+      {
+       "length": 5,
+       "count": 1
+      },
+      {
+       "length": 7,
+       "count": 1
+      }
+     ],
+     "opponent": [
+      {
+       "length": 2,
+       "count": 1
+      },
+      {
+       "length": 3,
+       "count": 1
+      }
+     ],
+     "period_number": 2
+    }
+   ]
+  },
+  "pass_string_average_length": {
+   "full_time": {
+    "own": 2.8,
+    "opponent": 2.5
+   },
+   "periods": [
+    {
+     "own": 2.9,
+     "opponent": 2.5,
+     "period_number": 1
+    },
+    {
+     "own": 2.7,
+     "opponent": 2.5,
+     "period_number": 2
+    }
+   ]
+  }
+ }
+}

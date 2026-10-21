@@ -121,35 +121,45 @@ describe('team stats', () => {
 })
 
 describe('player stats', () => {
-  it('keeps the nine curated stats per jersey number, also for numbers without a squad entry', () => {
-    const players = parsePlayerStats(fixture('analysis-stats-player-response.json'))
-    expect(players.map((player) => player.jerseyNumber)).toEqual([7, 10, 99])
-    const seven = players.find((player) => player.jerseyNumber === 7)!
-    expect(seven.stats).toHaveLength(9)
-    expect(seven.stats.map((stat) => stat.statType)).not.toContain('football_touches_total')
-    expect(seven.stats.find((stat) => stat.statType === 'top_speed_kmh')).toEqual({ statType: 'top_speed_kmh', category: 'physical', value: 27.8 })
+  it('keeps every curated stat per jersey number with its values per period', () => {
+    const players = parsePlayerStats(fixture('analysis-stats-match-all-players.json'))
+    expect(players.map((player) => player.jerseyNumber)).toEqual([1, 2, 3, 5])
+    const first = players[0]!
+    expect(first.stats.map((stat) => stat.statType)).toContain('football_passes_completed_total')
+    expect(first.stats.every((stat) => stat.category !== undefined)).toBe(true)
+    const distance = first.stats.find((stat) => stat.statType === 'distance_total_meters')!
+    expect(distance.category).toBe('physical')
+    expect(distance.periodValues.map((period) => period.period)).toEqual([1, 2])
+    expect(distance.periodValues.reduce((sum, period) => sum + period.value, 0)).toBe(distance.value)
+  })
+
+  it('drops unknown stat types, inherited keys and rows without a jersey number', () => {
+    const players = parsePlayerStats({ items: [
+      { player: { type: 'jersey_only', jersey_number: '5' }, stats: [{ type: 'toString', value: 1, periods: [] }, { type: 'football_touches_total', value: 4, periods: [] }, { type: 'sprints_total', value: 3, periods: [] }] },
+      { player: { type: 'jersey_only', jersey_number: '5' }, stats: [{ type: 'sprints_total', value: 9, periods: [] }] },
+      { player: { type: 'identified', jersey_number: null }, stats: [{ type: 'sprints_total', value: 1, periods: [] }] },
+    ] })
+    expect(players).toEqual([{ jerseyNumber: 5, stats: [{ statType: 'sprints_total', category: 'physical', value: 3, periodValues: [] }] }])
   })
 
   it('accepts leading zeroes, rejects non-numeric and unsafe jersey numbers', () => {
-    const stat = [{ type: 'sprints_total', value: 1 }]
-    expect(parsePlayerStats({ items: [{ jersey_number: '07', stats: stat }] })[0]?.jerseyNumber).toBe(7)
-    expect(() => parsePlayerStats({ items: [{ jersey_number: '7a', stats: stat }] })).toThrowError(expect.objectContaining({ code: 'upstream_changed' }))
-    expect(() => parsePlayerStats({ items: [{ jersey_number: '7\n', stats: stat }] })).toThrowError(VeoError)
-    expect(parsePlayerStats({ items: [{ jersey_number: '99999999999999999999', stats: stat }] })).toEqual([])
+    const row = (jersey: string) => ({ items: [{ player: { type: 'jersey_only', jersey_number: jersey }, stats: [{ type: 'sprints_total', value: 1, periods: [] }] }] })
+    expect(parsePlayerStats(row('07'))[0]?.jerseyNumber).toBe(7)
+    expect(() => parsePlayerStats(row('7a'))).toThrowError(expect.objectContaining({ code: 'upstream_changed' }))
+    expect(() => parsePlayerStats(row('7\n'))).toThrowError(VeoError)
+    expect(parsePlayerStats(row('99999999999999999999'))).toEqual([])
   })
 
-  it('ignores inherited keys and keeps the first of duplicate jersey and stat pairs', () => {
-    const players = parsePlayerStats({ items: [
-      { jersey_number: '5', stats: [{ type: 'toString', value: 1 }, { type: 'sprints_total', value: 3 }] },
-      { jersey_number: '5', stats: [{ type: 'sprints_total', value: 9 }] },
-    ] })
-    expect(players).toEqual([{ jerseyNumber: 5, stats: [{ statType: 'sprints_total', category: 'physical', value: 3 }] }])
+  it('rejects a period without a number as a changed shape', () => {
+    expect(() => parsePlayerStats({ items: [{ player: { type: 'jersey_only', jersey_number: '5' }, stats: [{ type: 'sprints_total', value: 1, periods: [{ value: 1 }] }] }] }))
+      .toThrowError(expect.objectContaining({ code: 'upstream_changed' }))
   })
 
-  it('sends team_id and exactly one match per request', async () => {
+  it('asks for all players of exactly one match with the Veo app headers', async () => {
     const { fetch, calls } = fakeFetch(json({ items: [] }))
     await fetchPlayerStats('token', { veoTeamId: 'team', veoMatchId: 'm1' }, { fetch })
-    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ type: 'cross_match', team_id: 'team', group_by: 'player', match_ids: ['m1'] })
+    expect(JSON.parse(String(calls[0]?.init?.body))).toEqual({ type: 'match_all_players', match_id: 'm1', team_id: 'team' })
+    expect((calls[0]?.init?.headers as Record<string, string>)['Veo-App-Id']).toBe('hazard')
   })
 })
 
@@ -169,7 +179,15 @@ describe('host allowlist', () => {
     await expect(veoRequest('https://example.com/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
     await expect(veoRequest('http://app.veo.co/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
     await expect(veoRequest('https://app.veo.co:8443/', {}, { fetch })).rejects.toThrow(/non-Veo host/)
+    await expect(veoRequest('https://d1234example.cloudfront.net/recordings/x', {}, { fetch })).rejects.toThrow(/non-Veo host/)
     expect(fetch).not.toHaveBeenCalled()
+  })
+
+  it('allows Veo RAS on its CloudFront host', async () => {
+    const fetch = vi.fn<FetchLike>(async () => new Response(null, { status: 204 }))
+    const { veoRequest } = await import('./http.js')
+    await veoRequest('https://dt3kfuz4eo879.cloudfront.net/recordings/x/analytics', {}, { fetch })
+    expect(fetch).toHaveBeenCalledOnce()
   })
 
   it('does not allow callers to enable automatic redirects', async () => {

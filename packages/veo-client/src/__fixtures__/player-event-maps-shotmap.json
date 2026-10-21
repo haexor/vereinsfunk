@@ -1,0 +1,586 @@
+{
+ "direction_of_play": "leftToRight",
+ "items": [
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "18"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000025",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 888199,
+     "x": 0.9492,
+     "z": 0.6544,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000028",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1224233,
+     "x": 0.934,
+     "z": 0.6187,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002e",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1835566,
+     "x": 0.9541,
+     "z": 0.6253,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000030",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 2280399,
+     "x": 0.8601,
+     "z": 0.6789,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "17"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000034",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 3322699,
+     "x": 0.8343,
+     "z": 0.6047,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "11"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000003b",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4266333,
+     "x": 0.7814,
+     "z": 0.43999999999999995,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000003d",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4612999,
+     "x": 0.7547,
+     "z": 0.33919999999999995,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000042",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4907266,
+     "x": 0.6820999999999999,
+     "z": 0.40980000000000005,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000048",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5261266,
+     "x": 0.7736000000000001,
+     "z": 0.381,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "3"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002b",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1731666,
+     "x": 0.7908,
+     "z": 0.3893,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002c",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1883399,
+     "x": 0.827,
+     "z": 0.4771,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002f",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 2350066,
+     "x": 0.8678,
+     "z": 0.4574,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "13"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000036",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 3823766,
+     "x": 0.8157,
+     "z": 0.621,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000037",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4003833,
+     "x": 0.7208,
+     "z": 0.5727,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000039",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4452833,
+     "x": 0.7855,
+     "z": 0.36560000000000004,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000044",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4808999,
+     "x": 0.7906,
+     "z": 0.5522,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000041",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5001933,
+     "x": 0.7372000000000001,
+     "z": 0.4447,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000045",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5075433,
+     "x": 0.8261000000000001,
+     "z": 0.7143999999999999,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000047",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5302166,
+     "x": 0.7212000000000001,
+     "z": 0.43689999999999996,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "16"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000026",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 730499,
+     "x": 0.8172,
+     "z": 0.3656,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002a",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1573066,
+     "x": 0.8587,
+     "z": 0.5484,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000002d",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1920033,
+     "x": 0.8285,
+     "z": 0.4932,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "7"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000029",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1476566,
+     "x": 0.9329,
+     "z": 0.4344,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "10"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000035",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 3580933,
+     "x": 0.7181,
+     "z": 0.5334,
+     "outcome": 1
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000040",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4505399,
+     "x": 0.7653,
+     "z": 0.48250000000000004,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000003e",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4741799,
+     "x": 0.6977,
+     "z": 0.39759999999999995,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000043",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4940066,
+     "x": 0.6838,
+     "z": 0.38060000000000005,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "2"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000003a",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4313699,
+     "x": 0.8355,
+     "z": 0.6853,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000046",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5070233,
+     "x": 0.7751,
+     "z": 0.6631,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000049",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 5418966,
+     "x": 0.7827,
+     "z": 0.6617,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "9"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000027",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 1014133,
+     "x": 0.877,
+     "z": 0.6461,
+     "outcome": null
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000031",
+     "event_type": "FootballShot",
+     "period": 1,
+     "video_time_ms": 2566333,
+     "x": 0.9231,
+     "z": 0.3915,
+     "outcome": 1
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "5"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000003c",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4392466,
+     "x": 0.7581,
+     "z": 0.5786,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "6"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000033",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 3421233,
+     "x": 0.7709,
+     "z": 0.6628000000000001,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  },
+  {
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "8"
+   },
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000038",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 4202399,
+     "x": 0.7402,
+     "z": 0.3006,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": []
+  }
+ ],
+ "included": {
+  "matches": {
+   "58860b8f-32c5-4cf4-859b-61ccd35a923f": {
+    "id": "00000000-0000-0000-0000-000000000001",
+    "kickoff_time": "2026-10-03T08:52:55.939Z",
+    "opponent_name": "Name opponent_name",
+    "own_score": 26,
+    "opponent_score": 0,
+    "url": "example-url",
+    "thumbnail": "example-thumbnail"
+   }
+  },
+  "positions": {},
+  "unassigned_events": {
+   "events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000032",
+     "event_type": "FootballShot",
+     "period": 2,
+     "video_time_ms": 3407533,
+     "x": 0.6626000000000001,
+     "z": 0.5505,
+     "outcome": null
+    }
+   ],
+   "unlocated_events": [
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000058",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 946279
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000059",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 1127927
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000005b",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 1361093
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000005c",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 1422755
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000005d",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 1529261
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000062",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 2095026
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000063",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 2199797
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000065",
+     "event_type": "FootballGoal",
+     "period": 1,
+     "video_time_ms": 2454585
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-000000000068",
+     "event_type": "FootballGoal",
+     "period": 2,
+     "video_time_ms": 3472536
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000006a",
+     "event_type": "FootballGoal",
+     "period": 2,
+     "video_time_ms": 3823553
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000006b",
+     "event_type": "FootballGoal",
+     "period": 2,
+     "video_time_ms": 3967297
+    },
+    {
+     "match_id": "00000000-0000-0000-0000-000000000001",
+     "event_id": "00000000-0000-0000-0000-00000000006d",
+     "event_type": "FootballGoal",
+     "period": 2,
+     "video_time_ms": 4221951
+    }
+   ]
+  }
+ }
+}

@@ -1,0 +1,9 @@
+{
+ "id": "00000000-0000-0000-0000-000000000001",
+ "ball-tracking": "completed",
+ "player-tracking": "completed",
+ "event-detection": "completed",
+ "match-details": "completed",
+ "shot-details": "completed",
+ "match-report": "completed"
+}

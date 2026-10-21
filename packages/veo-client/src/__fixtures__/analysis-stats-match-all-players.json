@@ -1,0 +1,2081 @@
+{
+ "items": [
+  {
+   "type": "match_player",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "team_id": "00000000-0000-0000-0000-000000000002",
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "1"
+   },
+   "stats": [
+    {
+     "category": null,
+     "unit": "count",
+     "type": "matches_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "starts_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "captaincies_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "player_of_the_match_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_goal_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_assist_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_attempts_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_corner_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_free_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_goal_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_throw_in_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "discipline",
+      "label": "Discipline",
+      "translation_key": "stat_category.discipline"
+     },
+     "unit": "count",
+     "type": "football_foul_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_penalty_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_tackle_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_dribble_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_duel_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_interception_total",
+     "value": 4,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 4
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_loose_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "goalkeeping",
+      "label": "Goalkeeping",
+      "translation_key": "stat_category.goalkeeping"
+     },
+     "unit": "count",
+     "type": "football_save_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_total",
+     "value": 13,
+     "periods": [
+      {
+       "period": 1,
+       "value": 6
+      },
+      {
+       "period": 2,
+       "value": 7
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_completed_total",
+     "value": 13,
+     "periods": [
+      {
+       "period": 1,
+       "value": 6
+      },
+      {
+       "period": 2,
+       "value": 7
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_unsuccessful_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "meter",
+     "type": "distance_total_meters",
+     "value": 2382,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1095
+      },
+      {
+       "period": 2,
+       "value": 1287
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "high_intensity_runs_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "sprints_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "top_speed_kmh",
+     "value": 14.10146713256836,
+     "periods": [
+      {
+       "period": 1,
+       "value": 14.10146713256836
+      },
+      {
+       "period": 2,
+       "value": 13.096988677978516
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "average_speed_kmh",
+     "value": 2.0265183448791504,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1.977103590965271
+      },
+      {
+       "period": 2,
+       "value": 2.0724170207977295
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "second",
+     "type": "seconds_played_total",
+     "value": 4140,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1968
+      },
+      {
+       "period": 2,
+       "value": 2172
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "match_player",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "team_id": "00000000-0000-0000-0000-000000000002",
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "2"
+   },
+   "stats": [
+    {
+     "category": null,
+     "unit": "count",
+     "type": "matches_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "starts_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "captaincies_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "player_of_the_match_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_goal_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_assist_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_attempts_total",
+     "value": 3,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 3
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_corner_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_free_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_goal_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_throw_in_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "discipline",
+      "label": "Discipline",
+      "translation_key": "stat_category.discipline"
+     },
+     "unit": "count",
+     "type": "football_foul_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_penalty_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_tackle_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_dribble_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_duel_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 2
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_interception_total",
+     "value": 3,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 3
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_loose_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "goalkeeping",
+      "label": "Goalkeeping",
+      "translation_key": "stat_category.goalkeeping"
+     },
+     "unit": "count",
+     "type": "football_save_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_total",
+     "value": 31,
+     "periods": [
+      {
+       "period": 1,
+       "value": 14
+      },
+      {
+       "period": 2,
+       "value": 17
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_completed_total",
+     "value": 27,
+     "periods": [
+      {
+       "period": 1,
+       "value": 11
+      },
+      {
+       "period": 2,
+       "value": 16
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_unsuccessful_total",
+     "value": 4,
+     "periods": [
+      {
+       "period": 1,
+       "value": 3
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "meter",
+     "type": "distance_total_meters",
+     "value": 4021,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1775
+      },
+      {
+       "period": 2,
+       "value": 2246
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "high_intensity_runs_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "sprints_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "top_speed_kmh",
+     "value": 18.8505916595459,
+     "periods": [
+      {
+       "period": 1,
+       "value": 16.73582649230957
+      },
+      {
+       "period": 2,
+       "value": 18.8505916595459
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "average_speed_kmh",
+     "value": 3.5116055011749268,
+     "periods": [
+      {
+       "period": 1,
+       "value": 3.3183536529541016
+      },
+      {
+       "period": 2,
+       "value": 3.686518430709839
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "second",
+     "type": "seconds_played_total",
+     "value": 4037,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1865
+      },
+      {
+       "period": 2,
+       "value": 2172
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "match_player",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "team_id": "00000000-0000-0000-0000-000000000002",
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "3"
+   },
+   "stats": [
+    {
+     "category": null,
+     "unit": "count",
+     "type": "matches_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "starts_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "captaincies_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "player_of_the_match_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_goal_total",
+     "value": 3,
+     "periods": [
+      {
+       "period": 1,
+       "value": 3
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_assist_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_attempts_total",
+     "value": 3,
+     "periods": [
+      {
+       "period": 1,
+       "value": 3
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_corner_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_free_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_goal_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_throw_in_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "discipline",
+      "label": "Discipline",
+      "translation_key": "stat_category.discipline"
+     },
+     "unit": "count",
+     "type": "football_foul_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_penalty_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_tackle_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 2
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_dribble_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 2
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_duel_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_interception_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 2
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_loose_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "goalkeeping",
+      "label": "Goalkeeping",
+      "translation_key": "stat_category.goalkeeping"
+     },
+     "unit": "count",
+     "type": "football_save_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_total",
+     "value": 22,
+     "periods": [
+      {
+       "period": 1,
+       "value": 22
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_completed_total",
+     "value": 12,
+     "periods": [
+      {
+       "period": 1,
+       "value": 12
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_unsuccessful_total",
+     "value": 10,
+     "periods": [
+      {
+       "period": 1,
+       "value": 10
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "meter",
+     "type": "distance_total_meters",
+     "value": 2495,
+     "periods": [
+      {
+       "period": 1,
+       "value": 2495
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "high_intensity_runs_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "sprints_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "top_speed_kmh",
+     "value": 18.61446762084961,
+     "periods": [
+      {
+       "period": 1,
+       "value": 18.61446762084961
+      },
+      {
+       "period": 2,
+       "value": 0.0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "average_speed_kmh",
+     "value": 4.437941551208496,
+     "periods": [
+      {
+       "period": 1,
+       "value": 4.437941551208496
+      },
+      {
+       "period": 2,
+       "value": 0.0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "second",
+     "type": "seconds_played_total",
+     "value": 1968,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1968
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "type": "match_player",
+   "match_id": "00000000-0000-0000-0000-000000000001",
+   "team_id": "00000000-0000-0000-0000-000000000002",
+   "player": {
+    "type": "jersey_only",
+    "jersey_number": "5"
+   },
+   "stats": [
+    {
+     "category": null,
+     "unit": "count",
+     "type": "matches_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "starts_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "captaincies_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": null,
+     "unit": "count",
+     "type": "player_of_the_match_total",
+     "value": 0,
+     "periods": []
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_goal_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_assist_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_attempts_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_corner_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_free_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_goal_kick_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_throw_in_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "discipline",
+      "label": "Discipline",
+      "translation_key": "stat_category.discipline"
+     },
+     "unit": "count",
+     "type": "football_foul_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "set_pieces",
+      "label": "Set pieces",
+      "translation_key": "stat_category.set_pieces"
+     },
+     "unit": "count",
+     "type": "football_penalty_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_tackle_total",
+     "value": 2,
+     "periods": [
+      {
+       "period": 1,
+       "value": 2
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "attacking",
+      "label": "Attacking",
+      "translation_key": "stat_category.attacking"
+     },
+     "unit": "count",
+     "type": "football_dribble_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_duel_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_interception_total",
+     "value": 1,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 1
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "defending",
+      "label": "Defending",
+      "translation_key": "stat_category.defending"
+     },
+     "unit": "count",
+     "type": "football_loose_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "goalkeeping",
+      "label": "Goalkeeping",
+      "translation_key": "stat_category.goalkeeping"
+     },
+     "unit": "count",
+     "type": "football_save_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_total",
+     "value": 23,
+     "periods": [
+      {
+       "period": 1,
+       "value": 12
+      },
+      {
+       "period": 2,
+       "value": 11
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_completed_total",
+     "value": 19,
+     "periods": [
+      {
+       "period": 1,
+       "value": 11
+      },
+      {
+       "period": 2,
+       "value": 8
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "distribution",
+      "label": "Distribution",
+      "translation_key": "stat_category.distribution"
+     },
+     "unit": "count",
+     "type": "football_passes_unsuccessful_total",
+     "value": 4,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1
+      },
+      {
+       "period": 2,
+       "value": 3
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "meter",
+     "type": "distance_total_meters",
+     "value": 4129,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1940
+      },
+      {
+       "period": 2,
+       "value": 2189
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "high_intensity_runs_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "count",
+     "type": "sprints_total",
+     "value": 0,
+     "periods": [
+      {
+       "period": 1,
+       "value": 0
+      },
+      {
+       "period": 2,
+       "value": 0
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "top_speed_kmh",
+     "value": 18.461423873901367,
+     "periods": [
+      {
+       "period": 1,
+       "value": 16.357303619384766
+      },
+      {
+       "period": 2,
+       "value": 18.461423873901367
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "kilometer_per_hour",
+     "type": "average_speed_kmh",
+     "value": 3.5214438438415527,
+     "periods": [
+      {
+       "period": 1,
+       "value": 3.495434045791626
+      },
+      {
+       "period": 2,
+       "value": 3.5462112426757812
+      }
+     ]
+    },
+    {
+     "category": {
+      "id": "physical",
+      "label": "Physical",
+      "translation_key": "stat_category.physical"
+     },
+     "unit": "second",
+     "type": "seconds_played_total",
+     "value": 4140,
+     "periods": [
+      {
+       "period": 1,
+       "value": 1968
+      },
+      {
+       "period": 2,
+       "value": 2172
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "meta": {}
+}
