@@ -117,28 +117,40 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
     const in14Days = new Date(now.getTime() + 14 * 24 * 60 * 60 * 1000).toISOString()
     const nowIso = now.toISOString()
 
-    const [upcomingFixtures, playedFixtures, upcomingEvents, submissionsWithFixture, submissionsWithEvent] = await Promise.all([
+    // fetchAllRows aus demselben Grund wie bei membersWithApprovePermission: max_rows=1000 wuerde
+    // bei vielen bereits verknuepften Beitraegen einige stillschweigend abschneiden. Ein Beitrag
+    // haengt entweder ueber POST /v1/submissions an seinem Anlass oder kommt aus der Textwerkstatt
+    // (eine Sitzung, deren Kandidat uebernommen wurde, also mit post_id).
+    const [upcomingFixtures, playedFixtures, upcomingEvents, submissionFixtures, sessionFixtures, submissionEvents, sessionEvents] = await Promise.all([
       client.from('fixtures').select('id, opponent_name, kickoff_at, source_updated_at, announcement_dismissed_at')
         .eq('department_id', params.id).neq('status', 'cancelled').gte('kickoff_at', nowIso).lte('kickoff_at', in3Days),
       client.from('fixtures').select('id, opponent_name, kickoff_at, home_score, away_score, source_updated_at, result_dismissed_at')
         .eq('department_id', params.id).eq('status', 'played').gte('kickoff_at', past48Hours).lte('kickoff_at', nowIso),
       client.from('club_events').select('id, title, starts_at, source_updated_at, invitation_dismissed_at')
         .eq('department_id', params.id).neq('status', 'cancelled').gte('starts_at', nowIso).lte('starts_at', in14Days),
-      // fetchAllRows aus demselben Grund wie bei membersWithApprovePermission: max_rows=1000
-      // wuerde bei vielen bereits verknuepften Einreichungen einige stillschweigend abschneiden.
-      fetchAllRows<{ fixture_id: string }>((from, to) =>
-        client.from('submissions').select('fixture_id').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to),
-      ),
-      fetchAllRows<{ club_event_id: string }>((from, to) =>
-        client.from('submissions').select('club_event_id').eq('department_id', params.id).not('club_event_id', 'is', null).range(from, to),
-      ),
+      fetchAllRows<Record<string, unknown>>((from, to) =>
+        client.from('submissions').select('fixture_id, created_at').eq('department_id', params.id).not('fixture_id', 'is', null).range(from, to)),
+      fetchAllRows<Record<string, unknown>>((from, to) =>
+        client.from('composition_sessions').select('fixture_id, created_at').eq('department_id', params.id).not('fixture_id', 'is', null).not('post_id', 'is', null).range(from, to)),
+      fetchAllRows<Record<string, unknown>>((from, to) =>
+        client.from('submissions').select('club_event_id, created_at').eq('department_id', params.id).not('club_event_id', 'is', null).range(from, to)),
+      fetchAllRows<Record<string, unknown>>((from, to) =>
+        client.from('composition_sessions').select('club_event_id, created_at').eq('department_id', params.id).not('club_event_id', 'is', null).not('post_id', 'is', null).range(from, to)),
     ])
     if (upcomingFixtures.error) throw upcomingFixtures.error
     if (playedFixtures.error) throw playedFixtures.error
     if (upcomingEvents.error) throw upcomingEvents.error
 
-    const fixtureIdsWithSubmission = new Set(submissionsWithFixture.map((row) => row.fixture_id))
-    const eventIdsWithSubmission = new Set(submissionsWithEvent.map((row) => row.club_event_id))
+    const postsCreatedAtByFixture = new Map<string, string[]>()
+    for (const row of [...submissionFixtures, ...sessionFixtures]) {
+      const fixtureId = row.fixture_id as string
+      postsCreatedAtByFixture.set(fixtureId, [...(postsCreatedAtByFixture.get(fixtureId) ?? []), row.created_at as string])
+    }
+    const eventIdsWithPost = new Set([...submissionEvents, ...sessionEvents].map((row) => row.club_event_id as string))
+    // Fuer das Ergebnis zaehlen nur Beitraege, die nach dem Anpfiff entstanden sind -- die
+    // Ankuendigung desselben Spiels erzaehlt es nicht.
+    const hasPostSince = (fixtureId: string, since: string | null) => (postsCreatedAtByFixture.get(fixtureId) ?? [])
+      .some((createdAt) => since === null || new Date(createdAt) >= new Date(since))
     // Wiederkehr nach einer Korrektur in der Quelle: erscheint wieder, sobald source_updated_at
     // neuer ist als der Zeitstempel des Wegklickens -- ein verlegtes Spiel ist eine neue
     // Ankuendigung (plans/019, Abschnitt 4).
@@ -150,7 +162,7 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
 
     const suggestions: ContentSuggestion[] = []
     for (const fixture of upcomingFixtures.data) {
-      if (fixtureIdsWithSubmission.has(fixture.id as string)) continue
+      if (hasPostSince(fixture.id as string, null)) continue
       if (isDismissed(fixture.announcement_dismissed_at as string | null, fixture.source_updated_at as string | null)) continue
       suggestions.push({
         kind: 'fixture_announcement', departmentId: params.id, fixtureId: fixture.id as string,
@@ -159,7 +171,7 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
       })
     }
     for (const fixture of playedFixtures.data) {
-      if (fixtureIdsWithSubmission.has(fixture.id as string)) continue
+      if (hasPostSince(fixture.id as string, fixture.kickoff_at as string)) continue
       if (isDismissed(fixture.result_dismissed_at as string | null, fixture.source_updated_at as string | null)) continue
       suggestions.push({
         kind: 'fixture_result', departmentId: params.id, fixtureId: fixture.id as string,
@@ -168,7 +180,7 @@ export function registerClubScheduleRoutes(app: FastifyInstance, context: ApiRou
       })
     }
     for (const event of upcomingEvents.data) {
-      if (eventIdsWithSubmission.has(event.id as string)) continue
+      if (eventIdsWithPost.has(event.id as string)) continue
       if (isDismissed(event.invitation_dismissed_at as string | null, event.source_updated_at as string | null)) continue
       suggestions.push({ kind: 'event_invitation', departmentId: params.id, clubEventId: event.id as string, occursAt: event.starts_at as string, label: `Einladung zu „${event.title as string}“ fehlt noch` })
     }

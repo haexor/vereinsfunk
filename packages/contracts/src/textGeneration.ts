@@ -144,9 +144,14 @@ export const CreateCompositionSessionSchema = z.object({
   // Zeichen, nicht Tokens: die Plattform weist einen zu langen Beitrag ab.
   maxCharacters: MaxCharactersSchema.optional(),
   temperature: TextGenerationTemperatureSchema.default(TEXT_GENERATION_DEFAULT_TEMPERATURE),
+  // Anlass aus dem Kalender: Fakten und Herkunft leitet die API selbst aus der Zeile ab
+  // (services/scheduleOccasion.ts), der Client nennt nur die ID.
+  fixtureId: UuidSchema.optional(),
+  clubEventId: UuidSchema.optional(),
 }).superRefine((value, context) => {
   const chosen = [value.styleProfileId, value.systemStyleProfileSlug, value.personaSlug].filter((field) => field !== undefined && field !== null)
   if (chosen.length > 1) context.addIssue({ code: 'custom', message: 'Choose at most one of styleProfileId, systemStyleProfileSlug, or personaSlug' })
+  if (value.fixtureId && value.clubEventId) context.addIssue({ code: 'custom', message: 'fixtureId and clubEventId are mutually exclusive' })
   requireDepartmentForTeam(value, context)
 })
 
@@ -163,6 +168,9 @@ export const TextWorkshopDraftPayloadSchema = z.object({
     if (new Set(platforms).size !== platforms.length) context.addIssue({ code: 'custom', message: 'selectedPlatforms must not contain duplicates' })
   }),
   maxCharactersOverride: z.string().max(5),
+  // Der Kalender-Anlass bleibt beim Wiederaufnehmen eines Entwurfs erhalten.
+  fixtureId: UuidSchema.optional(),
+  clubEventId: UuidSchema.optional(),
 })
 export const SaveTextWorkshopDraftSchema = z.object({
   organizationId: UuidSchema,

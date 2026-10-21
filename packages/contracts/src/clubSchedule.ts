@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { CommunicationGoalSchema } from './content.js'
 import { UuidSchema } from './primitives.js'
 
 // Paket 019: Mannschaften, Spielplaene, Ergebnisse und Veranstaltungen.
@@ -66,6 +67,18 @@ export const FactProvenanceSchema = z.object({
 })
 export const SourceProvenanceMapSchema = z.record(z.string(), FactProvenanceSchema)
 
+// Anlass eines Beitrags aus dem Kalender (Spiel oder Veranstaltung), wie die Textwerkstatt ihn
+// vorbelegt: die aus der Quelle abgeleiteten Fakten, was der Quelle noch fehlt, und ihr Stand.
+export const ScheduleOccasionSchema = z.object({
+  kind: z.enum(['fixture', 'club_event']),
+  id: UuidSchema,
+  label: z.string().min(1),
+  facts: z.record(z.string(), z.union([z.string(), z.number(), z.boolean()])),
+  missing: z.array(z.string()),
+  capturedAt: z.iso.datetime({ offset: true }),
+  suggestedGoal: CommunicationGoalSchema,
+})
+
 export const ContentSuggestionKindSchema = z.enum(['fixture_announcement', 'fixture_result', 'event_invitation', 'quota_reminder'])
 export const ContentSuggestionSchema = z.object({
   kind: ContentSuggestionKindSchema,
@@ -90,5 +103,6 @@ export type ClubEvent = z.infer<typeof ClubEventSchema>
 export type FactProvenance = z.infer<typeof FactProvenanceSchema>
 export type SourceProvenanceMap = z.infer<typeof SourceProvenanceMapSchema>
 export type ContentSuggestionKind = z.infer<typeof ContentSuggestionKindSchema>
+export type ScheduleOccasion = z.infer<typeof ScheduleOccasionSchema>
 export type ContentSuggestion = z.infer<typeof ContentSuggestionSchema>
 export type ContentSuggestionsResponse = z.infer<typeof ContentSuggestionsResponseSchema>

@@ -1,19 +1,13 @@
-import {
-  CreateSubmissionSchema,
-  SubmissionAcceptedSchema,
-  TeamSchema,
-  UuidSchema,
-  type Team,
-} from '@vereinsfunk/contracts'
-import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator, factsFromClubEvent, factsFromFixture } from '@vereinsfunk/content-engine'
+import { CreateSubmissionSchema, SubmissionAcceptedSchema, UuidSchema } from '@vereinsfunk/contracts'
+import { assertGroundedPost, createGroundedContentBrief, FakeContentGenerator } from '@vereinsfunk/content-engine'
 import { createIdempotencyKey, evaluateSubmitPermission } from '@vereinsfunk/domain'
 import type { FastifyInstance } from 'fastify'
 import { z } from 'zod'
 import { parseSupabaseData } from '../supabase.js'
-import { CLUB_EVENT_COLUMNS, FIXTURE_COLUMNS, mapClubEventRow, mapFixtureRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder } from './shared.js'
 import { fetchMemberTrust, resolveScopedEffectiveConfig } from '../services/policyRules.js'
+import { loadScheduleOccasion } from '../services/scheduleOccasion.js'
 import { toPermissionScope } from '../services/scopeAuthorization.js'
 
 export const DeletableScopeSchema = z.object({ organization_id: UuidSchema, department_id: UuidSchema.nullable(), team_id: UuidSchema.nullable() })
@@ -56,65 +50,21 @@ export function registerContentRoutes(app: FastifyInstance, context: ApiRouteCon
     // Herkunft eines Spiel-/Veranstaltungsbezugs leitet die API selbst aus der referenzierten
     // Zeile her, nie aus Client-Angaben (plans/README.md, "RPC traut Client nicht") -- der Client
     // nennt nur fixtureId/clubEventId, die tatsaechlichen Fakten/den Quellenstand bestimmt diese
-    // Anfrage selbst per factsFromFixture/factsFromClubEvent. sourceMaterial.facts bleibt
+    // Anfrage selbst per loadScheduleOccasion (services/scheduleOccasion.ts). sourceMaterial.facts bleibt
     // trotzdem das vom Menschen bestaetigte Ergebnis (plans/019, Abschnitt 3: "er bestaetigt
     // schneller als er tippt, aber er bestaetigt") -- provenance/snapshot sind nur die
     // Herkunftsangabe dazu, keine Ueberschreibung der Fakten.
     let sourceProvenance: Record<string, unknown> = {}
     let sourceRevisionAt: string | null = null
     let sourcePrefillSnapshot: Record<string, unknown> | null = null
-    if (input.fixtureId || input.clubEventId) {
-      const organizationRow = await client.from('organizations').select('timezone').eq('id', input.organizationId).single()
-      if (organizationRow.error) throw organizationRow.error
-      const timezone = organizationRow.data.timezone as string
-
-      if (input.fixtureId) {
-        const fixtureRow = await client
-          .from('fixtures')
-          .select(FIXTURE_COLUMNS)
-          .eq('organization_id', input.organizationId)
-          .eq('id', input.fixtureId)
-          .maybeSingle()
-        if (fixtureRow.error) throw fixtureRow.error
-        if (!fixtureRow.data || fixtureRow.data.department_id !== input.departmentId) {
-          return reply.code(400).send({ error: 'fixture_not_found_in_department', correlationId: request.id })
-        }
-        const fixture = mapFixtureRow(fixtureRow.data)
-        let team: Team | null = null
-        if (fixture.teamId) {
-          const teamRow = await client
-            .from('teams')
-            .select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at')
-            .eq('id', fixture.teamId)
-            .maybeSingle()
-          if (teamRow.error) throw teamRow.error
-          team = teamRow.data ? TeamSchema.parse(mapTeamRow(teamRow.data)) : null
-        }
-        const facts = factsFromFixture(fixture, team, timezone)
-        if (facts.ok) {
-          sourceProvenance = facts.provenance
-          sourcePrefillSnapshot = facts.facts
-        }
-        sourceRevisionAt = fixture.sourceUpdatedAt ?? fixtureRow.data.updated_at as string
-      } else if (input.clubEventId) {
-        const eventRow = await client
-          .from('club_events')
-          .select(CLUB_EVENT_COLUMNS)
-          .eq('organization_id', input.organizationId)
-          .eq('id', input.clubEventId)
-          .maybeSingle()
-        if (eventRow.error) throw eventRow.error
-        if (!eventRow.data || (eventRow.data.department_id !== null && eventRow.data.department_id !== input.departmentId)) {
-          return reply.code(400).send({ error: 'event_not_found_in_department', correlationId: request.id })
-        }
-        const clubEvent = mapClubEventRow(eventRow.data)
-        const facts = factsFromClubEvent(clubEvent, timezone)
-        if (facts.ok) {
-          sourceProvenance = facts.provenance
-          sourcePrefillSnapshot = facts.facts
-        }
-        sourceRevisionAt = clubEvent.sourceUpdatedAt ?? eventRow.data.updated_at as string
+    const occasion = await loadScheduleOccasion(client, { organizationId: input.organizationId, departmentId: input.departmentId }, input)
+    if (occasion && !occasion.ok) return reply.code(400).send({ error: occasion.error, correlationId: request.id })
+    if (occasion) {
+      if (occasion.occasion.factsResult.ok) {
+        sourceProvenance = occasion.occasion.provenance
+        sourcePrefillSnapshot = occasion.occasion.factsResult.facts
       }
+      sourceRevisionAt = occasion.occasion.sourceRevisionAt
     }
 
     // forbiddenTopics (Plan 011, "Durchsetzung an vier Stellen") wird als eigenes Feld gespeichert

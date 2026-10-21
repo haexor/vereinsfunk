@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { parseSupabaseData } from '../supabase.js'
 import { resolveTextGenerationPlatformAvailability } from './channelAvailability.js'
 import { resolveScopedEffectiveConfig } from './policyRules.js'
+import { loadScheduleOccasion } from './scheduleOccasion.js'
 
 export const SYSTEM_STYLE_PROFILES: Record<string, { name: string; description: string; styleRules: StyleProfileRules; avoidRules: string[]; doRules: string[] }> = {
   klar_erklaerend: { name: 'Klar erklärend', description: 'Sachlich, verständlich und direkt.', styleRules: { toneTags: ['klar', 'sachlich'], catchphrases: [], examples: [{ input: '3:1 Sieg im Lokalderby, Tore: Müller, Meier, 500 Zuschauer', output: '3:1 gegen den Lokalrivalen. Müller und Meier trafen vor 500 Zuschauern – ein klarer Auftritt unserer Mannschaft.' }], additionalInstructions: '' }, avoidRules: ['Superlative ohne Beleg'], doRules: [] },
@@ -78,7 +79,12 @@ export async function createTextGenerationSession(
     if (!profile) return { ok: false, statusCode: 422, error: 'style_profile_not_found' }
     styleSnapshot = { name: profile.name, description: profile.description, styleRules: profile.styleRules, avoidRules: profile.avoidRules, doRules: profile.doRules, slug }
   }
-  const sourceMaterial = { ...input.sourceMaterial, forbiddenTopics: Array.from(new Set(config.policies.forbiddenTopics)) }
+  // Fakten aus dem Kalender-Anlass leitet die API selbst her und legt sie ueber gleichnamige
+  // Client-Angaben -- die Werkstatt zeigt sie vorab nur an (GET /v1/text-workshop/occasion).
+  const occasion = await loadScheduleOccasion(userClient, { organizationId: input.organizationId, departmentId: input.departmentId }, input)
+  if (occasion && !occasion.ok) return { ok: false, statusCode: 404, error: occasion.error }
+  const occasionFacts = occasion?.occasion.view.facts ?? {}
+  const sourceMaterial = { ...input.sourceMaterial, facts: { ...input.sourceMaterial.facts, ...occasionFacts }, forbiddenTopics: Array.from(new Set(config.policies.forbiddenTopics)) }
   const targetPlatforms = [...input.targetPlatforms].sort()
   // 'plaintext' ist exklusiv (primitives.ts) -- sonst zieht die serverseitige Minimumbildung weiter
   // unten seine grosszuegige Grenze sinnlos auf die knappste andere gewaehlte Plattform herunter.
@@ -86,7 +92,8 @@ export async function createTextGenerationSession(
   const platformAvailability = await resolveTextGenerationPlatformAvailability(userClient, input.organizationId, input.departmentId, input.teamId ?? null, config.policies.allowedChannelIds)
   const unavailablePlatform = targetPlatforms.find((platform) => !platformAvailability.get(platform)?.available)
   if (unavailablePlatform) return { ok: false, statusCode: 422, error: 'platform_not_available', platform: unavailablePlatform }
-  const sessionHash = createHash('sha256').update(JSON.stringify({ goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision, targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetIds })).digest('hex')
+  const occasionReference = occasion ? { kind: occasion.occasion.view.kind, id: occasion.occasion.view.id } : null
+  const sessionHash = createHash('sha256').update(JSON.stringify({ goal: input.communicationGoal, sourceMaterial, styleSnapshot, sourceRevision: input.sourceRevision, targetPlatforms, maxCharacters: input.maxCharacters ?? null, temperature: input.temperature, mediaAssetIds, occasion: occasionReference })).digest('hex')
   const candidateHash = createHash('sha256').update(`${sessionHash}:initial`).digest('hex')
   const serviceClient = getServiceClient()
   for (const mediaAssetId of mediaAssetIds) {
@@ -113,6 +120,17 @@ export async function createTextGenerationSession(
   })
   if (result.error) throw result.error
   const created = z.object({ sessionId: UuidSchema, candidateIds: z.array(UuidSchema).min(1) }).parse(result.data)
+  if (occasion) {
+    // Wie die Medienanhaenge unten nach dem RPC: authenticated darf composition_sessions nur lesen.
+    const linked = await serviceClient.from('composition_sessions').update({
+      fixture_id: occasion.occasion.view.kind === 'fixture' ? occasion.occasion.view.id : null,
+      club_event_id: occasion.occasion.view.kind === 'club_event' ? occasion.occasion.view.id : null,
+      source_provenance: occasion.occasion.provenance,
+      source_revision_at: occasion.occasion.sourceRevisionAt,
+      source_prefill_snapshot: occasionFacts,
+    }).eq('id', created.sessionId).eq('organization_id', input.organizationId)
+    if (linked.error) throw linked.error
+  }
   if (mediaAssetIds.length > 0) {
     const attach = await serviceClient.from('composition_session_post_media').upsert(
       mediaAssetIds.map((mediaAssetId, position) => ({ organization_id: input.organizationId, composition_session_id: created.sessionId, media_asset_id: mediaAssetId, position, role: position === 0 ? 'primary' : 'slide', created_by: actorUserId })),
