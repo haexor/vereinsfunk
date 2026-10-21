@@ -20,7 +20,7 @@ Migration `supabase/migrations/2026102201_playerboard_veo_analysis.sql`. Nummer 
 
 Zustände von `analysis_status`:
 - **`none`**: Es wurde noch kein Analysepaket geholt.
-- **`pending`**: Veo rechnet noch, oder es fehlen Halbzeiten oder Seiten.
+- **`pending`**: Veo rechnet noch, oder Veo meldet keine Halbzeiten. Das Feld `is_confirmed` der Halbzeiten zählt nicht: Laut Testabruf ist es `false`, obwohl Veo die Analyse liefert.
 - **`complete`**: Alles, was Veo für dieses Spiel liefert, ist gespeichert.
 - **`unavailable`**: Veo liefert für dieses Spiel keine Analyse, etwa bei Analyseversion 1 ohne Orte oder ohne Abo.
 
@@ -62,11 +62,13 @@ Die gespeicherten Stat-Typen werden auf alle Typen aus Inventar §4.2.1 erweiter
 | `organization_id`, `team_id`, `fixture_id` | `uuid` not null | |
 | `veo_event_id` | `text` not null | Eindeutig je Spiel: `unique (fixture_id, veo_event_id)`. |
 | `team_association` | `text` not null | `own` oder `opponent`. |
-| `event_type` | `text` not null | Veo-Typ, z. B. `FootballGoal`, `FootballShot`, `pass`, `tackle`, `duel`, `interception`, `loose`, `save`, `FootballFoul` und Standards. |
+| `event_type` | `text` not null | Veo-Typ ohne `possession` und `*_target`: `FootballGoal`, `FootballShot`, `pass`, `tackle`, `duel`, `dribble`, `interception`, `loose`, `save`, `FootballFoul`, `FootballOutOfPlay`, `FootballKickOff`, `FootballGoalKick`, `FootballCornerKick`, `FootballFreeKick`, `FootballThrowIn`, `FootballPenaltyKick`. |
+| `end_x`, `end_y` | `real` null | Nur bei `pass`: Ziel des Passes aus `receiver_x`/`receiver_z`, normiert wie `x`/`y`. |
+| `receiver_jersey_number` | `integer` null | Nur bei `pass`. |
 | `jersey_number` | `integer` null | ≥ 0. `null` heißt, das Ereignis ist keinem Spieler zugeordnet. |
 | `period_number` | `smallint` not null | ≥ 1. |
 | `period_time_ms`, `video_time_ms` | `integer` not null | ≥ 0. |
-| `x`, `y` | `real` null | Beide gesetzt oder beide `null` (Ereignis ohne Ort), Wertebereich 0–1. Normiert nach R-06. |
+| `x`, `y` | `real` null | Beide gesetzt oder beide `null` (Ereignis ohne Ort), Wertebereich 0–1. Normiert nach R-06; der Worker begrenzt Veos Werte knapp außerhalb von 0–1 vorher auf diesen Bereich. |
 | `outcome` | `smallint` null | Veo-Ausgang, 1 heißt Tor oder Erfolg. |
 | `assist_jersey_number` | `integer` null | Nur bei Toren. |
 
@@ -88,16 +90,21 @@ Zuordnung zum Spieler: Beim Lesen wird die Zuordnung über `playerboard_veo_play
 
 Primärschlüssel `(fixture_id, jersey_number, period_number)`. Der Spieler wird wie bei den Ereignissen über die Zuordnung ermittelt.
 
-### `playerboard_veo_tracks`: Positionsdaten, nur wenn der Testabruf Tracking belegt (R-05)
+### `playerboard_veo_tracks`: Positionsdaten (R-05, im Testabruf belegt)
+
+Die Daten werden roh je Spielfeldseite gespeichert, ohne Bezug auf eigene Mannschaft oder Gegner. Die Zuordnung geschieht beim Lesen mit den aktuellen Halbzeiten (`own_side`). Eine spätere Seitenkorrektur in Veo braucht so kein Neuladen. Positionsdaten werden einmal je Spiel geholt.
 
 | Spalte | Typ | Regel |
 |---|---|---|
 | `organization_id`, `team_id`, `fixture_id` | `uuid` not null | |
-| `track_key` | `text` not null | Eigene Spieler als `own:<rückennummer>` oder `own:track:<id>` ohne Nummer, Gegner als `opponent:<id>`. Ball und Schiedsrichter werden nicht gespeichert. |
-| `start_s` | `integer` not null | Erste Sekunde der Spur. |
-| `samples` | `bytea` not null | Je Sekunde `x` und `y` als uint16 (0–65535 entspricht 0–1), normiert nach R-06. `0xFFFF`/`0xFFFF` heißt ohne Wert. |
+| `veo_track_id` | `integer` not null | ≥ 0. Veos Spur-ID. |
+| `side` | `text` not null | `left` oder `right`, aus Veos Kategorie: 0 und 1 sind links, 2 und 3 rechts. Ball (6) und Schiedsrichter (4) werden nicht gespeichert. |
+| `goalkeeper` | `boolean` not null | Kategorie 0 oder 2. |
+| `jersey_number` | `integer` null | ≥ 0. Häufigste von Veo erkannte Rückennummer der Spur, `-1` wird zu `null`. |
+| `start_s` | `integer` not null | ≥ 0. Erste Sekunde der Spur in Videozeit. |
+| `samples` | `bytea` not null | Je Sekunde `x` und `y` als uint16 (0–65535 entspricht 0–1), in Kamera-Koordinaten. `0xFFFF`/`0xFFFF` steht für keinen Wert. Länge ist ein Vielfaches von 4. |
 
-Primärschlüssel `(fixture_id, track_key)`.
+Primärschlüssel `(fixture_id, veo_track_id)`.
 
 ### `playerboard_veo_team_views`: Ansichtseinstellungen je Mannschaft
 
@@ -119,7 +126,7 @@ Rechte:
 | Funktion | Liefert |
 |---|---|
 | `playerboard_veo_match_analysis(target_team_id, target_fixture_id)` | Ein JSON mit Spiel, Halbzeiten, Verfügbarkeit, Mannschafts- und Spielerwerten je Halbzeit (inkl. Zuordnung und Namen), Ereignissen beider Mannschaften (eigene mit `playerId`), Heatmap-Matrizen, Pass- und Ballbesitzdaten, Spielverlauf, Passnetz, Bericht |
-| `playerboard_veo_match_tracks(target_team_id, target_fixture_id)` | Positionsdaten des Spiels, nur eigene Spuren und Gegnerspuren. Nur, wenn Tracking gespeichert ist. |
+| `playerboard_veo_match_tracks(target_team_id, target_fixture_id)` | Positionsdaten des Spiels als Spuren je Seite mit `periods`. Die Zuordnung zu eigener Mannschaft und Gegner macht `packages/domain` beim Lesen. Ohne gespeicherte Spuren liefert die Funktion eine leere Liste. |
 | `playerboard_veo_team_matches(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` (**bestehend, erweitert**) | Wie bisher je Spiel Kopfdaten sowie Mannschafts- und Spielerwerte. Neu sind die Filter, `kind`, `analysisStatus`, `analyticsVersion`, `periodValues` der Spielerwerte, die Drittel-Anteile und `personId`. Die Signatur mit drei Argumenten bleibt als Überladung, damit `/playerboard/spiele` und die öffentliche Ausgabe unverändert laufen. |
 | `playerboard_veo_team_shots(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Alle Schüsse und Tore der gefilterten Spiele mit Ort, Mannschaft und `playerId` (nur eigene). Grundlage für die Saison-Schusskarten. |
 | `playerboard_veo_player_heatmaps(target_team_id, target_player_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Matrizen des ganzen Spiels und Spielsekunden des Spielers je gefiltertem Spiel |

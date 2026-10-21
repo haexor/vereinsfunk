@@ -45,7 +45,7 @@ Grundlage für Story 1, 2 und 5. Response `PlayerboardVeoMatchAnalysisSchema`:
 
 ## `GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/tracks`
 
-Nur wenn `hasTracking` gilt. Response `{ sampleHz: 1, tracks: { key: string, teamAssociation: 'own' | 'opponent', jerseyNumber: int | null, startS: int, samples: base64 }[] }`. Das Web rechnet daraus die Heatmap für den gewählten Zeitabschnitt (R-05). Gibt es keine Positionsdaten, kommt `404 not_found`.
+Nur wenn `hasTracking` gilt. Response `{ sampleHz: 1, periods: Period[], tracks: { veoTrackId: int, side: 'left' | 'right', goalkeeper: boolean, jerseyNumber: int | null, startS: int, samples: base64 }[] }`. Die Koordinaten sind Kamera-Koordinaten. `packages/domain` ordnet die Spuren je Halbzeit über `ownSide` der eigenen Mannschaft oder dem Gegner zu und rechnet die Heatmap für den gewählten Zeitabschnitt (R-05). Gegnerspuren tragen nie einen Bezug zum Kader. Gibt es keine Positionsdaten, kommt `404 not_found`.
 
 ## `GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/report`
 

@@ -42,8 +42,8 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 ## Phase 1: Setup (PR 1)
 
 - [ ] T001 Ausgangslage sichern: `pnpm install`, `pnpm db:reset`, dann `pnpm lint`, `pnpm typecheck`, `pnpm test`, `pnpm db:test`. Notieren, was schon vor der Änderung rot ist. Keine Dateiänderung.
-- [ ] T002 Lesender Testabruf gegen das Veo-Konto der C1 nach der Prüfliste in [research.md](research.md) („Testabruf: Prüfliste“, Punkte 1–10). Die Rohantworten bleiben außerhalb des Repos. Zugang wie vom Betreiber freigegeben. Hilfsdateien mit Zugangsdaten oder Cookie danach löschen. Ins Log nur die Form der Antworten, keine Werte.
-- [ ] T003 `specs/002-veo-analyse/research.md` an den Befund anpassen: jede Markierung **[Testabruf]** durch das belegte Ergebnis ersetzen. Bei Abweichung die betroffene Entscheidung (R-01, R-03, R-05, R-06, R-07, R-10, R-12) samt `data-model.md` und `contracts/veo-analysis.md` nachziehen. Ist kein Tracking verfügbar: `playerboard_veo_tracks`, `GET …/tracks` und T029/T038 streichen und in `scope.md` „Heat map (Mannschaft)“ auf den Fallback aus R-05 setzen.
+- [X] T002 Lesender Testabruf gegen das Veo-Konto der C1 nach der Prüfliste in [research.md](research.md) („Testabruf: Prüfliste“, Punkte 1–10). Die Rohantworten bleiben außerhalb des Repos. Zugang wie vom Betreiber freigegeben. Hilfsdateien mit Zugangsdaten oder Cookie danach löschen. Ins Log nur die Form der Antworten, keine Werte.
+- [X] T003 `specs/002-veo-analyse/research.md` an den Befund anpassen: jede Markierung **[Testabruf]** durch das belegte Ergebnis ersetzen. Bei Abweichung die betroffene Entscheidung (R-01, R-03, R-05, R-06, R-07, R-10, R-12) samt `data-model.md` und `contracts/veo-analysis.md` nachziehen. Ist kein Tracking verfügbar: `playerboard_veo_tracks`, `GET …/tracks` und T029/T038 streichen und in `scope.md` „Heat map (Mannschaft)“ auf den Fallback aus R-05 setzen.
 - [ ] T004 Anonymisierte Testdaten in `packages/veo-client/src/__fixtures__/` ablegen, eine JSON-Datei je Endpunkt aus R-01 (Name = Endpunkt, z. B. `match-events.json`, `player-heatmaps.json`). Dabei ersetzen:
   - Namen, `known_name`, Avatare und Video-URLs durch Platzhalter
   - Veo-IDs durch feste Dummy-IDs
@@ -106,7 +106,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
     - `analysis_status` text not null default `'none'` check in (`none`, `pending`, `complete`, `unavailable`)
     - `analysis_fetched_at` timestamptz null, `analysis_refresh_requested_at` timestamptz null
   - `playerboard_veo_player_stats.period_values` jsonb not null default `'[]'` check `jsonb_typeof = 'array'`
-  - Tabellen `playerboard_veo_match_analysis`, `playerboard_veo_events` (`unique (fixture_id, veo_event_id)`, Index `(organization_id, team_id, event_type)`), `playerboard_veo_heatmaps` (PK `(fixture_id, jersey_number, period_number)`, „0 = ganzes Spiel“) und `playerboard_veo_tracks` (PK `(fixture_id, track_key)`), jeweils mit:
+  - Tabellen `playerboard_veo_match_analysis`, `playerboard_veo_events` (`unique (fixture_id, veo_event_id)`, Index `(organization_id, team_id, event_type)`), `playerboard_veo_heatmaps` (PK `(fixture_id, jersey_number, period_number)`, „0 = ganzes Spiel“) und `playerboard_veo_tracks` (PK `(fixture_id, veo_track_id)`, `side` check in (`left`, `right`), `samples` Länge Vielfaches von 4), jeweils mit:
     - allen Spalten und Checks aus data-model.md
     - zusammengesetztem Fremdschlüssel `(organization_id, team_id, fixture_id)` auf `playerboard_veo_matches` mit `on delete cascade`
     - RLS `enable` und `force`
@@ -130,7 +130,13 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Halbzeiten nicht bestätigt: `pending` mit `periods_missing`.
   - Veo rechnet noch: `pending` mit `veo_processing`.
   - Ins Log kommen nur Zähler und Status.
-- [ ] T015 `apps/worker/src/veoAnalysisSync.ts`: holt das Analysepaket eines Spiels mit den Funktionen aus T007, normiert mit `packages/domain` (T010), verdichtet Tracking auf 1 Hz und prüft mit dem Schema aus T013. Die Wiederholungsregel wird aus `veoSync.ts` übernommen (`withRetry` gemeinsam nutzen statt kopieren).
+- [ ] T015 `apps/worker/src/veoAnalysisSync.ts`: holt das Analysepaket eines Spiels mit den Funktionen aus T007, normiert mit `packages/domain` (T010), verdichtet Tracking auf 1 Hz und prüft mit dem Schema aus T013. Weitere Regeln aus dem Testabruf (research.md):
+  - Positionsdaten nur holen, wenn für das Spiel noch keine gespeichert sind. Zwischen den 30-s-Fenstern eine kurze Pause.
+  - RAS-Abrufe ohne `Authorization`-Header.
+  - Passnetz mit `periods: [{ periodId: <Nummer>, ownSide }]`.
+  - Ereignistypen `possession` und `*_target` verwerfen; bei `pass` Ziel und Empfänger aus den Attributen übernehmen.
+  - `x`/`z` vor dem Normieren auf [0, 1] begrenzen.
+  - Freischaltfelder (`has_tracking_data`, `type`, `is_confirmed`) nicht als Bedingung nutzen. Die Wiederholungsregel wird aus `veoSync.ts` übernommen (`withRetry` gemeinsam nutzen statt kopieren).
 - [ ] T016 Test in `apps/worker/src/veoSync.test.ts` ergänzen, vor T017:
   - Analyse nur für Spiele, die `analysis_status in ('none', 'pending')` haben, deren Anstoß höchstens 14 Tage zurückliegt oder deren Mannschaft `analysis_refresh_requested_at` gesetzt hat.
   - Ein Fehler im Analysepaket lässt `apply_match` desselben Spiels bestehen, und der Lauf endet mit der Fehlerklasse.
