@@ -269,7 +269,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 **Independent Test**: [quickstart.md](quickstart.md) §2, Schritt 5 (Mannschaft).
 
-- [ ] T051 [P] [US3] pgTAP `supabase/tests/playerboard_veo_season.test.sql`:
+- [X] T051 [P] [US3] pgTAP `supabase/tests/playerboard_veo_season.test.sql`:
   - `playerboard_veo_team_matches` mit Filtern: `kinds`; `last_n`; `fixture_ids` schließt andere Filter aus; die alte Signatur mit drei Argumenten liefert unverändert.
   - Neue Felder vorhanden: `kind`, `analysisStatus`, `thirds`, `periodValues`, `personId`.
   - `playerboard_veo_team_shots` mit Isolation positiv und negativ.
@@ -280,7 +280,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
     - Radar ohne genau 6 Kennzahlen abgelehnt
     - Vergleichsmannschaft aus anderem Verein oder ohne Sicht abgelehnt
   - Isolation der Tabelle `playerboard_veo_team_views`
-- [ ] T052 [US3] Migration `supabase/migrations/<zeitstempel>_playerboard_veo_season.sql`:
+- [X] T052 [US3] Migration `supabase/migrations/2026102201_playerboard_veo_season.sql` (umgesetzt als eigene Lesefunktion `playerboard_veo_team_season` statt Erweiterung von `playerboard_veo_team_matches` und `playerboard_veo_team_shots`, siehe data-model.md):
   - `playerboard_veo_team_matches` als Überladung mit `kinds text[]`, `fixture_ids uuid[]`, `last_n int` und den neuen Feldern; `authz.playerboard_veo_matches_json` entsprechend erweitern, die öffentliche Ausgabe unverändert lassen.
   - `playerboard_veo_team_shots`
   - Tabelle `playerboard_veo_team_views` nach [data-model.md](data-model.md): `key_metrics` text[] not null mit 0–4 Einträgen aus dem Kennzahlenkatalog; `radar` jsonb null; Fremdschlüssel `(organization_id, team_id)` auf `teams`; RLS lesen `can_view_playerboard_stats`, kein direktes Schreiben.
@@ -293,11 +293,11 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Radar-Normierung `own/max(own, cmp) * 0.9` und Standard-Radar (Inv. §1b.8)
   - Form der letzten 3 Spiele
 - [ ] T054 [US3] `packages/domain/src/veoMetrics.ts`, Teil Saison.
-- [ ] T055 [P] [US3] Contracts:
+- [X] T055 [P] [US3] Contracts:
   - `PlayerboardVeoSeasonQuerySchema`, Erweiterung von `PlayerboardVeoMatchSchema`
   - `PlayerboardVeoShotsSchema` und `PlayerboardVeoTeamViewsSchema` mit `keyMetrics` 0–4 eindeutig und `radar.metrics` genau 6
   - Tests
-- [ ] T056 [US3] API:
+- [X] T056 [US3] API:
   - `GET …/veo/matches` mit Filtern (in `veo.ts`)
   - `GET …/veo/shots`, `GET` und `PUT …/veo/views` in `veoAnalysis.ts`; `PUT` mit Audit-Eintrag nach dem Muster in `routes/playerboard/settings.ts`; Fehler `422 invalid_metric`, `404 not_found`
   - Tests in `apps/api/src/playerboardVeoAnalysis.routes.test.ts`
@@ -308,7 +308,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Dialog „Kennzahlen bearbeiten“ (max. 4) nur mit `training.manage`
   - Hinweis, wenn nur ein Teil der Spiele beiträgt
 - [ ] T059 [P] [US3] `apps/web/app/components/PlayerboardVeoRadar.vue`: Radar mit 6 Achsen, zwei Flächen, Gitter bei 25/50/75/100 %, Beschriftung „eigen · Vergleich“. Wahl einer Mannschaft des Vereins mit Veo-Verbindung und Sicht, oder „Keine“ (Zeitraumvergleich). Dialog „Kennzahlen bearbeiten“ (genau 6). Textersatz als Tabelle.
-- [ ] T060 [US3] `apps/web/app/composables/usePlayerboardVeoSeason.ts` und Seite `apps/web/app/pages/playerboard/saison.vue`, Reiter Mannschaft: Filter, Kennzahlen, Schusskarte (`PlayerboardVeoShotMap` im Saisonmodus), Drittel, Radar. Navigation „Saison“ neben „Spiele“ in `apps/web/app/modules/registry.ts`.
+- [ ] T060 [US3] `apps/web/app/composables/usePlayerboardVeoSeason.ts` und Seite `apps/web/app/pages/playerboard/analytics.vue` (Betreiberwunsch: eigener Sidebar-Eintrag „Veo Analytics“ als Nachbau von Veos Analytics Studio), Reiter Mannschaft: Filter, Kennzahlen, Schusskarte (`PlayerboardVeoShotMap` im Saisonmodus), Drittel, Radar. Navigation „Saison“ neben „Spiele“ in `apps/web/app/modules/registry.ts`.
 - [ ] T061 [US3] Kopf der Spielauswertung (`spiele/[fixtureId].vue`): Kennzahlen der Mannschaft für dieses Spiel und Form der letzten 3 Spiele (Inv. §1a.9).
 - [ ] T062 [US3] Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 5 (Mannschaft), sowie §3 und §4. PR 4 öffnen.
 
