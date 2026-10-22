@@ -5,9 +5,10 @@ import {
   type PlayerboardPlayer,
   type PlayerboardVeoPlayerSeasonMatch,
   type PlayerboardVeoSeasonMatch,
+  type PlayerboardVeoTeamHeatmap,
   type PlayerboardVeoTeamViews,
 } from '@vereinsfunk/contracts'
-import { DEFAULT_KEY_METRICS, DEFAULT_SEASON_PLAYER_COLUMNS, seasonPlayerRows, seasonThirdPercents } from '@vereinsfunk/domain'
+import { DEFAULT_KEY_METRICS, DEFAULT_SEASON_PLAYER_COLUMNS, seasonPlayerKey, seasonPlayerRows, seasonThirdPercents } from '@vereinsfunk/domain'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 import { scoreLabel } from '../../utils/playerboardVeo'
 import { filterFromQuery, filterToQuery, seasonFilter, type AnalyticsFilterState } from '../../utils/playerboardVeoAnalytics'
@@ -22,7 +23,7 @@ import { playerRowName, seasonShotsByPlayer, seasonTableRows } from '../../utils
 const route = useRoute()
 const router = useRouter()
 const { teams, team, teamId, organizationTimezone, canManage } = await usePlayerboardTeam()
-const { loadSeason, loadPlayerSeason, loadViews, saveViews } = usePlayerboardVeoSeason()
+const { loadSeason, loadPlayerSeason, loadTeamHeatmaps, loadViews, saveViews } = usePlayerboardVeoSeason()
 const { loadMatches } = usePlayerboardVeo()
 const api = useApiClient()
 
@@ -40,6 +41,10 @@ watch(() => route.query, (query) => {
 }, { deep: true })
 
 const matches = ref<PlayerboardVeoSeasonMatch[]>([])
+const teamHeatmaps = ref<PlayerboardVeoTeamHeatmap[] | null>(null)
+const teamHeatmapsFailed = ref(false)
+// Namen fuer die Spielerlisten der Karten, je seasonPlayerKey; zuletzt getragene Nummer gewinnt.
+const playerNames = computed(() => new Map((teamHeatmaps.value ?? []).flatMap((heatmap) => (heatmap.name ? [[seasonPlayerKey(heatmap), heatmap.name] as const] : []))))
 const views = ref<PlayerboardVeoTeamViews>({ keyMetrics: [], radar: null })
 const loading = ref(false)
 const errorMessage = ref('')
@@ -51,10 +56,17 @@ async function load() {
   if (!teamId.value) return
   loading.value = true
   try {
-    const [loaded, loadedViews] = await Promise.all([loadSeason(teamId.value, seasonFilter(filter.value)), loadViews(teamId.value)])
+    const [loaded, loadedViews, loadedHeatmaps] = await Promise.all([
+      loadSeason(teamId.value, seasonFilter(filter.value)),
+      loadViews(teamId.value),
+      // Die Heatmap ist ein Zusatz; ohne sie bleibt die Seite vollstaendig.
+      loadTeamHeatmaps(teamId.value, seasonFilter(filter.value)).catch(() => null),
+    ])
     if (!isLatest()) return
     matches.value = loaded
     views.value = loadedViews
+    teamHeatmaps.value = loadedHeatmaps
+    teamHeatmapsFailed.value = loadedHeatmaps === null
   } catch (error) {
     if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Veo Analytics konnte nicht geladen werden.')
   } finally {
@@ -179,13 +191,15 @@ const PLAYER_READ_ME = {
 const SECTIONS = [
   { id: 'analytics-key-metrics', label: 'Kennzahlen' },
   { id: 'analytics-shot-map', label: 'Schusskarte' },
+  { id: 'analytics-heatmap', label: 'Heatmap' },
   { id: 'analytics-passes', label: 'Passzonen' },
   { id: 'analytics-possession', label: 'Ballbesitzzonen' },
   { id: 'analytics-comparison', label: 'Vergleich' },
 ] as const
 const READ_ME = {
   keyMetrics: 'Die Karten zeigen den Durchschnitt über die gefilterten Spiele. Das Diagramm zeigt, wie sich die gewählte Kennzahl von Spiel zu Spiel entwickelt; ein Balken führt zur Auswertung des Spiels. Sieht ein Wert falsch aus, prüfe in Veo, ob Seiten und Halbzeiten des Spiels stimmen.',
-  shots: 'Angriff zeigt, von wo die eigene Mannschaft abgeschlossen hat, Verteidigung, von wo der Gegner abgeschlossen hat. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor; ein Klick öffnet die Stelle im Veo-Video.',
+  shots: 'Angriff zeigt, von wo die eigene Mannschaft abgeschlossen hat, Verteidigung, von wo der Gegner abgeschlossen hat. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor; ein Klick öffnet die Stelle im Veo-Video. Beim Angriff wählst du links einen Spieler.',
+  heatmap: 'Je röter die Fläche, desto mehr hielten sich die Spieler dort auf. Jedes Spiel ist so gedreht, dass die Mannschaft nach rechts angreift; Spieler mit mehr Spielzeit zählen stärker. Links wählst du einen einzelnen Spieler.',
   zones: 'Der Anteil je Drittel ist der Durchschnitt der Anteile in den einzelnen Spielen, wie bei Veo.',
   radar: 'Das Radar vergleicht sechs Kennzahlen mit einer anderen Mannschaft des Vereins oder mit einem anderen Zeitraum der eigenen Mannschaft. Jede Achse misst beide Seiten am größeren der beiden Werte.',
 } as const
@@ -231,9 +245,13 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
         </PlayerboardVeoAnalysisSection>
         <div class="grid gap-6 lg:grid-cols-2">
           <PlayerboardVeoAnalysisSection :id="SECTIONS[1].id" title="Schusskarte" :read-me="READ_ME.shots" class="lg:col-span-2">
-            <PlayerboardVeoSeasonShotMap :matches="matches" :own-label="ownLabel" />
+            <PlayerboardVeoSeasonShotMap :matches="matches" :own-label="ownLabel" :player-names="playerNames" />
           </PlayerboardVeoAnalysisSection>
-          <PlayerboardVeoAnalysisSection v-for="(zone, index) in ([['pass', passThirds, 'Passzonen'], ['possession', possessionThirds, 'Ballbesitzzonen']] as const)" :id="SECTIONS[2 + index]!.id" :key="zone[0]" :title="zone[2]" :read-me="READ_ME.zones">
+          <PlayerboardVeoAnalysisSection :id="SECTIONS[2].id" title="Heatmap" :read-me="READ_ME.heatmap" class="lg:col-span-2">
+            <p v-if="teamHeatmapsFailed" class="text-sm text-amber-800" role="alert">Die Heatmap konnte nicht geladen werden.</p>
+            <PlayerboardVeoSeasonTeamHeatmap v-else-if="teamHeatmaps" :heatmaps="teamHeatmaps" :own-label="ownLabel" />
+          </PlayerboardVeoAnalysisSection>
+          <PlayerboardVeoAnalysisSection v-for="(zone, index) in ([['pass', passThirds, 'Passzonen'], ['possession', possessionThirds, 'Ballbesitzzonen']] as const)" :id="SECTIONS[3 + index]!.id" :key="zone[0]" :title="zone[2]" :read-me="READ_ME.zones">
             <div class="mb-3 flex gap-2" role="group" aria-label="Mannschaft">
               <button type="button" :class="toggleClass(zoneTeam[zone[0]] === 'own')" :aria-pressed="zoneTeam[zone[0]] === 'own'" @click="zoneTeam[zone[0]] = 'own'">{{ ownLabel }}</button>
               <button type="button" :class="toggleClass(zoneTeam[zone[0]] === 'opponent')" :aria-pressed="zoneTeam[zone[0]] === 'opponent'" @click="zoneTeam[zone[0]] = 'opponent'">Gegner</button>
@@ -242,7 +260,7 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
             <p v-else class="text-sm text-[#6c756f]">Veo hat in diesen Spielen keine {{ zone[0] === 'pass' ? 'Passorte' : 'Ballbesitzorte' }} erkannt.</p>
           </PlayerboardVeoAnalysisSection>
         </div>
-        <PlayerboardVeoAnalysisSection :id="SECTIONS[4].id" title="Vergleich" :read-me="READ_ME.radar">
+        <PlayerboardVeoAnalysisSection :id="SECTIONS[5].id" title="Vergleich" :read-me="READ_ME.radar">
           <PlayerboardVeoRadar
             :team-id="teamId!" :own-label="ownLabel" :teams="otherTeams" :config="views.radar" :kinds="filter.mode === 'selection' ? [] : filter.kinds" :can-edit="canManage"
             @save="(radar) => save({ radar })"

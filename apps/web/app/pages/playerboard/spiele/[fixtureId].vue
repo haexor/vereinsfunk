@@ -118,11 +118,11 @@ const tracksLoader = () => {
 // "So liest du ..." je Grafik (FR-004), nach Veos Erklaertexten.
 const READ_ME = {
   stats: 'Die Balken zeigen, wie sich ein Wert zwischen beiden Mannschaften verteilt; die Heimmannschaft steht links. Der kleinere Wert ist abgeschwächt. Bei den Ballbesitz-Minuten steht in der Mitte die Zeit, in der keine Mannschaft den Ball hatte.',
-  shots: 'Die Karte zeigt, wo die Abschlüsse beider Mannschaften waren; jede Mannschaft greift nach rechts an. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor. Ein Klick öffnet die Stelle im Veo-Video.',
+  shots: 'Die Karte zeigt, wo die Abschlüsse beider Mannschaften waren; jede Mannschaft greift nach rechts an. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor. Ein Klick öffnet die Stelle im Veo-Video. Links wählst du einen Spieler der eigenen Mannschaft.',
   passes: 'Die Passzonen zeigen, in welchem Drittel die angekommenen Pässe einer Mannschaft gespielt wurden – je kräftiger die Fläche, desto mehr Pässe.',
   possession: 'Die Ballbesitzzonen zeigen, in welchem Drittel eine Mannschaft den Ball hatte, durch Pässe und Dribblings.',
   passStrings: 'Passketten zählen, wie oft eine Mannschaft mehrere Pässe ohne Ballverlust aneinandergereiht hat. Viele kurze Ketten sprechen für direktes Spiel, lange für Spielkontrolle.',
-  heatmap: 'Je röter die Fläche, desto mehr hielten sich die Feldspieler der Mannschaft dort auf – mit und ohne Ball. Mit den Schiebern wählst du einen Abschnitt der Halbzeit.',
+  heatmap: 'Je röter die Fläche, desto mehr hielten sich die Feldspieler der Mannschaft dort auf – mit und ohne Ball. Mit den Schiebern wählst du einen Abschnitt der Halbzeit, links einen einzelnen Spieler der eigenen Mannschaft.',
   players: 'Die Tabelle zeigt die Werte, die Veo den Rückennummern zugeordnet hat. Sortiere mit einem Klick auf den Spaltenkopf; ein Klick auf einen Spieler öffnet seine Karte mit Heatmap und Schusskarte. Graue Zeilen sind Nummern, die noch keinem Spieler zugeordnet sind.',
   momentum: 'Ausschläge nach oben zeigen Druck der Heimmannschaft in der gegnerischen Hälfte, nach unten Druck der Gastmannschaft. Je höher der Ausschlag, desto näher war das Geschehen am Tor. Veo rechnet das aus Positionen und Laufwegen.',
 } as const
@@ -178,7 +178,7 @@ const READ_ME = {
         <PlayerboardVeoAnalysisSection title="Spielwerte" :read-me="READ_ME.stats">
           <PlayerboardVeoStatComparison :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" />
         </PlayerboardVeoAnalysisSection>
-        <PlayerboardVeoAnalysisSection title="Schusskarte" :read-me="READ_ME.shots" :hint="hint('shots')">
+        <PlayerboardVeoAnalysisSection title="Schusskarte" :read-me="READ_ME.shots" :hint="hint('shots')" class="lg:col-span-2">
           <PlayerboardVeoShotMap :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" :player-label="playerLabel" />
         </PlayerboardVeoAnalysisSection>
         <PlayerboardVeoAnalysisSection title="Passzonen" :read-me="READ_ME.passes" :hint="hint('passes')">
@@ -190,8 +190,8 @@ const READ_ME = {
         <PlayerboardVeoAnalysisSection title="Passketten" :read-me="READ_ME.passStrings" :hint="hint('passStrings')">
           <PlayerboardVeoPassStrings :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" />
         </PlayerboardVeoAnalysisSection>
-        <PlayerboardVeoAnalysisSection title="Heatmap" :read-me="READ_ME.heatmap" :hint="heatmapAvailable ? null : hint('tracking')">
-          <PlayerboardVeoTeamHeatmap :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" :load-tracks="tracksLoader" />
+        <PlayerboardVeoAnalysisSection title="Heatmap" :read-me="READ_ME.heatmap" :hint="heatmapAvailable ? null : hint('tracking')" class="lg:col-span-2">
+          <PlayerboardVeoTeamHeatmap :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" :load-tracks="tracksLoader" :player-label="playerLabel" />
         </PlayerboardVeoAnalysisSection>
         <PlayerboardVeoAnalysisSection title="Spielverlauf" :read-me="READ_ME.momentum" :hint="hint('momentum')" class="lg:col-span-2">
           <PlayerboardVeoMomentum :analysis="analysis" :own-label="ownLabel" :opponent-label="opponentLabel" />

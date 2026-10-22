@@ -2,6 +2,7 @@ import {
   PlayerboardVeoPlayerHeatmapSchema,
   PlayerboardVeoPlayerSeasonMatchSchema,
   PlayerboardVeoSeasonMatchSchema,
+  PlayerboardVeoTeamHeatmapSchema,
   PlayerboardVeoTeamViewsSchema,
   type PlayerboardVeoTeamViews,
 } from '@vereinsfunk/contracts'
@@ -44,7 +45,12 @@ export function usePlayerboardVeoSeason() {
     return api.request(`/v1/playerboard/teams/${teamId}/veo/views`, { method: 'PUT', body: views }, PlayerboardVeoTeamViewsSchema)
   }
 
-  return { loadSeason, loadPlayerSeason, loadPlayerHeatmaps, loadViews, saveViews }
+  /** Matrizen des ganzen Spiels aller eigenen Rueckennummern fuer die Heatmap der Mannschaft. */
+  function loadTeamHeatmaps(teamId: string, filter: VeoSeasonFilter) {
+    return api.request(`/v1/playerboard/teams/${teamId}/veo/season/team-heatmaps`, { query: seasonQuery(filter) }, PlayerboardVeoTeamHeatmapSchema.array())
+  }
+
+  return { loadSeason, loadPlayerSeason, loadPlayerHeatmaps, loadTeamHeatmaps, loadViews, saveViews }
 }
 
 function seasonQuery(filter: VeoSeasonFilter): Record<string, string> {
