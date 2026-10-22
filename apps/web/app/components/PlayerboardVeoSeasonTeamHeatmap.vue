@@ -22,8 +22,9 @@ const playerOptions = computed(() => {
 const player = ref<string | null>(null)
 
 const chosen = computed(() => {
-  const first = props.heatmaps[0]
-  return props.heatmaps.filter((heatmap) => heatmap.width === first?.width && heatmap.height === first?.height && (player.value === null || keyOf(heatmap) === player.value))
+  const selected = props.heatmaps.filter((heatmap) => player.value === null || keyOf(heatmap) === player.value)
+  const first = selected[0]
+  return selected.filter((heatmap) => heatmap.width === first?.width && heatmap.height === first?.height)
 })
 const grid = computed(() => {
   const combined = combineHeatmaps(chosen.value.map((heatmap) => ({ cells: decodeBase64(heatmap.cells), weight: heatmap.secondsPlayed ?? 1 })))

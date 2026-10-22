@@ -23,7 +23,10 @@ const player = ref<string | null>(null)
 watch(team, () => { player.value = null })
 const playerOptions = computed(() => {
   const counts = new Map<number, number>()
-  for (const shot of allShots.value) if (shot.team === 'own' && shot.jerseyNumber !== null) counts.set(shot.jerseyNumber, (counts.get(shot.jerseyNumber) ?? 0) + 1)
+  for (const shot of allShots.value) {
+    if (shot.team !== 'own' || shot.jerseyNumber === null || (period.value !== null && shot.periodNumber !== period.value)) continue
+    counts.set(shot.jerseyNumber, (counts.get(shot.jerseyNumber) ?? 0) + 1)
+  }
   return [...counts.entries()].sort((a, b) => b[1] - a[1] || a[0] - b[0])
     .map(([jersey, count]) => ({ key: String(jersey), name: props.playerLabel('own', jersey), score: count }))
 })
