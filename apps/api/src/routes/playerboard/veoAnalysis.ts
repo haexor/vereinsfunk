@@ -6,6 +6,7 @@ import {
   PlayerboardVeoPlayerSeasonMatchSchema,
   PlayerboardVeoSeasonMatchSchema,
   PlayerboardVeoSeasonQuerySchema,
+  PlayerboardVeoTeamHeatmapSchema,
   PlayerboardVeoTeamViewsSchema,
   UuidSchema,
 } from '@vereinsfunk/contracts'
@@ -109,6 +110,25 @@ export function registerPlayerboardVeoAnalysisRoutes(app: FastifyInstance, conte
       throw heatmaps.error
     }
     return reply.send(z.array(PlayerboardVeoPlayerHeatmapSchema).parse(heatmaps.data ?? []))
+  })
+
+  // Heatmap der Mannschaft in Veo Analytics; das Web summiert die Matrizen (packages/domain).
+  app.get('/v1/playerboard/teams/:teamId/veo/season/team-heatmaps', async (request, reply) => {
+    if (!(await requireAuth(request, reply))) return
+    const params = TeamParamsSchema.parse(request.params)
+    const query = PlayerboardVeoSeasonQuerySchema.parse(request.query)
+    const scope = await loadTeamScope(supabaseClients.forService(), params.teamId)
+    if (!scope) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    if (!(await requireStatsAccess(context, request, reply, scope))) return
+    const heatmaps = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_veo_team_heatmaps', {
+      target_team_id: params.teamId, from_date: query.from ?? null, to_date: query.to ?? null,
+      kinds: query.kinds ?? null, fixture_ids: query.fixtureIds ?? null, last_n: query.last ?? null,
+    })
+    if (heatmaps.error) {
+      if (sendDatabaseError(request, reply, heatmaps.error)) return
+      throw heatmaps.error
+    }
+    return reply.send(z.array(PlayerboardVeoTeamHeatmapSchema).parse(heatmaps.data ?? []))
   })
 
   app.get('/v1/playerboard/teams/:teamId/veo/views', async (request, reply) => {

@@ -1,10 +1,11 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(15);
+select plan(19);
 
 set local role postgres;
 
--- Spec 002, PR 5: Veo Analytics, Reiter Spieler (2026102202_playerboard_veo_player_season.sql).
+-- Spec 002, PR 5: Veo Analytics, Reiter Spieler (2026102202_playerboard_veo_player_season.sql),
+-- und die Heatmap der Mannschaft (2026102204_playerboard_veo_team_heatmaps.sql).
 insert into auth.users (instance_id, id, aud, role, email, encrypted_password, raw_app_meta_data, raw_user_meta_data, created_at, updated_at)
 values
   ('00000000-0000-0000-0000-000000000000', '00230000-0000-4000-8000-000000000001', 'authenticated', 'authenticated', 'coach@pgtap-veo-players.local', '', '{}', '{}', now(), now()),
@@ -118,7 +119,24 @@ select is(
   'an assigned jersey is read through its player, not as a bare number'
 );
 
--- 8-11: Fehler.
+-- 8-10: Heatmap der Mannschaft: alle Rueckennummern, ganzes Spiel, mit Zuordnung.
+select results_eq(
+  $$select (heatmap->>'jerseyNumber')::int, (heatmap->>'playerId')::uuid, heatmap->>'name', (heatmap->>'secondsPlayed')::int
+      from jsonb_array_elements(public.playerboard_veo_team_heatmaps('00230000-1200-4000-8000-000000000001')) heatmap$$,
+  $$values (7, (select ada_id from ids limit 1), 'Ada Arnold'::text, 2700), (12, null::uuid, null, 2700), (10, (select ada_id from ids limit 1), 'Ada Arnold', 2700)$$,
+  'the team heatmaps carry every jersey of the filtered matches with its player'
+);
+select is(
+  jsonb_array_length(public.playerboard_veo_team_heatmaps('00230000-1200-4000-8000-000000000001', last_n => 1)),
+  1,
+  'the team heatmaps use the filters of Veo Analytics'
+);
+select throws_ok(
+  $$select public.playerboard_veo_team_heatmaps('00230000-1200-4000-8000-000000000001', last_n => 0)$$,
+  '22023', 'invalid_filter', 'the team heatmaps reject an invalid filter'
+);
+
+-- 11-14: Fehler.
 select throws_ok(
   $$select public.playerboard_veo_player_heatmaps('00230000-1200-4000-8000-000000000001', (select cora_id from ids limit 1))$$,
   'P0002', 'veo_player_not_found', 'a player of another team is not found'
@@ -136,12 +154,16 @@ select throws_ok(
   '22023', 'invalid_filter', 'last n is limited to 100'
 );
 
--- 12-15: Isolation.
+-- 15-19: Isolation.
 select set_config('request.jwt.claim.sub', '00230000-0000-4000-8000-000000000003', true);
 select throws_ok($$select public.playerboard_veo_player_season('00230000-1200-4000-8000-000000000001')$$, '42501', 'insufficient_permission', 'the neighbour team cannot read the player season');
 select throws_ok(
   $$select public.playerboard_veo_player_heatmaps('00230000-1200-4000-8000-000000000001', target_jersey_number => 12)$$,
   '42501', 'insufficient_permission', 'the neighbour team cannot read the heatmaps'
+);
+select throws_ok(
+  $$select public.playerboard_veo_team_heatmaps('00230000-1200-4000-8000-000000000001')$$,
+  '42501', 'insufficient_permission', 'the neighbour team cannot read the team heatmaps'
 );
 select set_config('request.jwt.claim.sub', '00230000-0000-4000-8000-000000000004', true);
 select throws_ok($$select public.playerboard_veo_player_season('00230000-1200-4000-8000-000000000001')$$, '42501', 'insufficient_permission', 'a member of another club cannot read the player season');

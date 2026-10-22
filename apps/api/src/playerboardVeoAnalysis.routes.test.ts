@@ -216,3 +216,19 @@ describe('Veo Analytics players: GET .../veo/season/players and .../veo/season/h
     expect((await get(hidden, `${HEATMAPS_URL}?jerseyNumber=12`)).statusCode).toBe(403)
   })
 })
+
+describe('Veo Analytics team heatmap: GET .../veo/season/team-heatmaps', () => {
+  const URL_ = `/v1/playerboard/teams/${TEAM_ID}/veo/season/team-heatmaps`
+
+  it('passes the season filters and answers the matrices of every jersey', async () => {
+    const calls: RpcCall[] = []
+    const heatmap = { fixtureId: FIXTURE_ID, jerseyNumber: 7, playerId: null, name: null, width: 60, height: 30, cells: 'AAE=', secondsPlayed: 2700 }
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_team_heatmaps: { data: [heatmap], error: null } }, calls) })
+    const response = await get(app, `${URL_}?last=3`)
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([heatmap])
+    expect(calls.at(-1)).toEqual({ name: 'playerboard_veo_team_heatmaps', args: { target_team_id: TEAM_ID, from_date: null, to_date: null, kinds: null, fixture_ids: null, last_n: 3 } })
+    const hidden = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ playerboard_can_view_stats: { data: false, error: null } }) })
+    expect((await get(hidden, URL_)).statusCode).toBe(403)
+  })
+})
