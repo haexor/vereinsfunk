@@ -18,23 +18,78 @@ set search_path = public, pg_temp
 as $$
 declare
   released integer;
+  stale_run record;
+  workflow record;
+  finished record;
+  active_lease boolean;
 begin
-  update public.integration_sync_runs run
-     set status = 'failed', error_class = 'stale_run', finished_at = now()
-   where run.organization_id = target_organization_id
-     and run.source_id = target_source_id
-     and run.mode = 'apply'
-     and run.status = 'running'
-     and run.started_at < now() - interval '15 minutes'
-     and not exists (
-       select 1 from public.workflow_runs workflow
-        where workflow.organization_id = run.organization_id
-          and workflow.workflow_name = 'sync-integration-source'
-          and workflow.entity_id = run.id
-          and workflow.technical_status = 'running'
-          and workflow.worker_lease_until > now()
-     );
-  get diagnostics released = row_count;
+  released := 0;
+  for stale_run in
+    select run.id, run.source_id
+      from public.integration_sync_runs run
+     where run.organization_id = target_organization_id
+       and run.source_id = target_source_id
+       and run.mode = 'apply'
+       and run.status = 'running'
+       and run.started_at < now() - interval '15 minutes'
+  loop
+    -- Sperre alle Workflow-Zeilen, bevor der Fachlauf gesperrt wird. Das ist dieselbe
+    -- Reihenfolge wie beim Worker (Lease zuerst, Fachstatus später) und verhindert Deadlocks.
+    -- Abgelaufene Leases werden bewusst mitgesperrt: Ein verspäteter Worker darf den bereits
+    -- freigegebenen Fachlauf nicht wiederbeleben.
+    active_lease := false;
+    for workflow in
+      select technical_status, worker_lease_until
+        from public.workflow_runs
+       where organization_id = target_organization_id
+         and workflow_name = 'sync-integration-source'
+         and entity_id = stale_run.id
+       for update
+    loop
+      active_lease := active_lease or (
+        workflow.technical_status = 'running' and workflow.worker_lease_until > now()
+      );
+    end loop;
+    if active_lease then
+      continue;
+    end if;
+
+    -- Der Kandidat kann seit der Auswahl bereits beendet worden sein. Die Prüfung direkt vor
+    -- dem Abschluss hält die Altersgrenze und den Status auch bei konkurrierenden Enqueues ein.
+    if not exists (
+      select 1
+        from public.integration_sync_runs run
+       where run.id = stale_run.id
+         and run.status = 'running'
+         and run.started_at < now() - interval '15 minutes'
+    ) then
+      continue;
+    end if;
+
+    -- Veo muss über denselben Abschlussweg wie der reguläre Worker/Cron laufen, damit
+    -- last_sync_status, consecutive_failures und failure_notified_at konsistent bleiben.
+    if exists (select 1 from public.playerboard_veo_links where integration_source_id = stale_run.source_id) then
+      for finished in
+        select * from public.playerboard_veo_finish_sync(stale_run.id, 'failed', 'stale_run', 0, 0, 0, 0)
+      loop
+        released := released + 1;
+        -- Dieser Pfad verschickt keine Mail. Die nächste echte Worker-Fehlermeldung soll
+        -- deshalb weiterhin benachrichtigen dürfen.
+        if finished.notify then
+          update public.playerboard_veo_links
+             set failure_notified_at = null
+           where team_id = finished.team_id;
+        end if;
+      end loop;
+    else
+      update public.integration_sync_runs run
+         set status = 'failed', error_class = 'stale_run', finished_at = now()
+       where run.id = stale_run.id and run.status = 'running';
+      if found then
+        released := released + 1;
+      end if;
+    end if;
+  end loop;
   return released;
 end;
 $$;

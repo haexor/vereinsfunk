@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(6);
+select plan(8);
 
 set local role postgres;
 
@@ -47,6 +47,8 @@ select is(
 -- 3-5: Ist der Lease abgelaufen, wird der Lauf freigegeben und ein neuer eingereiht.
 set local role postgres;
 update public.workflow_runs set worker_lease_until = now() - interval '5 minutes' where entity_id = (select run_id from first_run);
+update public.playerboard_veo_links set consecutive_failures = 2, failure_notified_at = null
+ where integration_source_id = '00240000-2000-4000-8000-000000000001';
 set local role service_role;
 create temporary table second_run on commit drop as
   select * from public.enqueue_integration_sync('00240000-1000-4000-8000-000000000001', '00240000-2000-4000-8000-000000000001', 'orphan-4', gen_random_uuid(), null);
@@ -55,6 +57,16 @@ select results_eq(
   $$select status::text, error_class, finished_at is not null from public.integration_sync_runs where id = (select run_id from first_run)$$,
   $$values ('failed'::text, 'stale_run'::text, true)$$,
   'the orphaned run ends as stale_run'
+);
+select results_eq(
+  $$select consecutive_failures, last_error_code, failure_notified_at is null from public.playerboard_veo_links
+    where integration_source_id = '00240000-2000-4000-8000-000000000001'$$,
+  $$values (3, 'stale_run'::text, true)$$,
+  'the orphaned Veo run updates failure tracking without suppressing the next notification'
+);
+select is(
+  (select last_sync_status from public.integration_sources where id = '00240000-2000-4000-8000-000000000001'),
+  'failed', 'the orphaned Veo run updates the source status'
 );
 select is(
   (select count(*)::int from public.workflow_outbox where entity_id = (select run_id from second_run) and workflow_name = 'sync-integration-source'),
