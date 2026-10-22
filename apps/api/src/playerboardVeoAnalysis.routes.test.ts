@@ -32,9 +32,10 @@ function rolesProvider(roles: Role[]): RoleProvider {
 }
 
 /** Service-Fake mit der Mannschaft; der Nutzer-Client beantwortet Sicht und Lesefunktionen. */
-function clients(userRpc: Record<string, { data: unknown; error: unknown }>, calls: RpcCall[] = []): SupabaseClientFactory {
+function clients(userRpc: Record<string, { data: unknown; error: unknown }>, calls: RpcCall[] = [], audits: unknown[] = []): SupabaseClientFactory {
   const service = {
     from: (name: string) => {
+      if (name === 'audit_events') return { insert: async (row: unknown) => { audits.push(row); return { error: null } } }
       if (name !== 'teams') throw new Error(`unexpected service table in test fake: ${name}`)
       return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID }, error: null })
     },
@@ -118,5 +119,59 @@ describe('GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/analysis and 
 
     const withoutTracks = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_match_tracks: { data: { ...tracks, tracks: [] }, error: null } }) })
     expect((await get(withoutTracks, TRACKS_URL)).statusCode).toBe(404)
+  })
+})
+
+describe('Veo Analytics: GET .../veo/season and GET/PUT .../veo/views', () => {
+  const SEASON_URL = `/v1/playerboard/teams/${TEAM_ID}/veo/season`
+  const VIEWS_URL = `/v1/playerboard/teams/${TEAM_ID}/veo/views`
+  const radar = { metrics: ['goals_scored', 'shots_on_goal', 'shots_to_goal_conversion_rate', 'win_ratio', 'passes_completed', 'possession_percent'], comparingTeamId: null, ownRange: ['2026-09-01', '2026-09-30'], comparingRange: ['2026-08-01', '2026-08-31'] }
+  const send = async (app: Awaited<ReturnType<typeof startApp>>, payload: unknown) =>
+    app.inject({ method: 'PUT', url: VIEWS_URL, headers: { authorization: `Bearer ${await signAccessToken(USER_ID)}` }, payload: payload as Record<string, unknown> })
+
+  it('passes the filters of the season to the database', async () => {
+    const calls: RpcCall[] = []
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_team_season: { data: [], error: null } }, calls) })
+    const response = await get(app, `${SEASON_URL}?kinds=match,cup&last=10&from=2026-08-01`)
+    expect(response.statusCode).toBe(200)
+    expect(calls.at(-1)).toEqual({ name: 'playerboard_veo_team_season', args: { target_team_id: TEAM_ID, from_date: '2026-08-01', to_date: null, kinds: ['match', 'cup'], fixture_ids: null, last_n: 10 } })
+    expect((await get(app, `${SEASON_URL}?kinds=training`)).statusCode).toBe(400)
+  })
+
+  it('needs sight of the team stats for the season and the views', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ playerboard_can_view_stats: { data: false, error: null } }) })
+    expect((await get(app, SEASON_URL)).statusCode).toBe(403)
+    expect((await get(app, VIEWS_URL)).statusCode).toBe(403)
+  })
+
+  it('returns the saved views', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_team_views: { data: { keyMetrics: [], radar: null }, error: null } }) })
+    expect((await get(app, VIEWS_URL)).json()).toEqual({ keyMetrics: [], radar: null })
+  })
+
+  it('lets only coaches save, rejects unknown metrics and audits the change', async () => {
+    const asPlayer = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({}) })
+    expect((await send(asPlayer, { keyMetrics: ['goals_scored'], radar: null })).statusCode).toBe(403)
+
+    const calls: RpcCall[] = []
+    const audits: unknown[] = []
+    const saved = { keyMetrics: ['goals_scored'], radar }
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: clients({ playerboard_veo_save_team_views: { data: saved, error: null } }, calls, audits) })
+    const invalid = await send(app, { keyMetrics: ['expected_goals'], radar: null })
+    expect(invalid.statusCode).toBe(422)
+    expect(invalid.json()).toMatchObject({ error: 'invalid_metric' })
+
+    const response = await send(app, saved)
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual(saved)
+    expect(calls.at(-1)).toEqual({ name: 'playerboard_veo_save_team_views', args: { target_team_id: TEAM_ID, p_key_metrics: ['goals_scored'], p_radar: radar } })
+    expect(audits).toHaveLength(1)
+  })
+
+  it('answers 404 when the comparison team is not available', async () => {
+    const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: clients({ playerboard_veo_save_team_views: { data: null, error: { message: 'comparing_team_not_available', code: '22023' } } }) })
+    const response = await send(app, { keyMetrics: [], radar: { ...radar, comparingTeamId: '10000000-1200-4000-8000-000000000009' } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
   })
 })

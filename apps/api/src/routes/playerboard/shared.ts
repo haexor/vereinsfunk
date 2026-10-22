@@ -98,6 +98,9 @@ const triggerErrors: Readonly<Record<string, number>> = {
   player_already_assigned: 409,
   fixture_not_available: 422,
   conflict_not_pending: 409,
+  // Spec 002, PR 4: Veo Analytics.
+  invalid_metric: 422,
+  invalid_filter: 400,
 }
 
 /**
