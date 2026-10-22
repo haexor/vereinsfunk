@@ -48,7 +48,14 @@ onMounted(async () => {
 const player = ref<string | null>(null)
 watch(team, () => { player.value = null })
 const playerOptions = computed(() => {
-  const jerseys = new Set([...props.analysis.players.map((entry) => entry.jerseyNumber), ...props.analysis.heatmaps.map((heatmap) => heatmap.jerseyNumber)])
+  const trackJerseys = (tracks.value ?? []).flatMap((track) => {
+    if (typeof track.jerseyNumber !== 'number') return []
+    const lastS = track.startS + track.samples.length / 4 - 1
+    return props.analysis.periods.some((period) =>
+      period.ownSide === track.side && track.startS <= period.endS && lastS >= period.startS,
+    ) ? [track.jerseyNumber] : []
+  })
+  const jerseys = new Set([...props.analysis.players.map((entry) => entry.jerseyNumber), ...props.analysis.heatmaps.map((heatmap) => heatmap.jerseyNumber), ...trackJerseys])
   return [...jerseys].sort((a, b) => a - b).map((jersey) => ({ key: String(jersey), name: props.playerLabel('own', jersey) }))
 })
 const jersey = computed(() => (team.value === 'own' && player.value !== null ? Number(player.value) : null))
