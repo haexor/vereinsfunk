@@ -1,10 +1,11 @@
 <script setup lang="ts">
-import { UuidSchema, type PlayerboardVeoAnalysisPart, type PlayerboardVeoMatchAnalysis } from '@vereinsfunk/contracts'
+import { PlayerboardPlayerSchema, UuidSchema, type PlayerboardPlayer, type PlayerboardVeoAnalysisPart, type PlayerboardVeoMatchAnalysis, type PlayerboardVeoMatchTracks } from '@vereinsfunk/contracts'
+import { DEFAULT_MATCH_PLAYER_COLUMNS } from '@vereinsfunk/domain'
 import { ApiRequestError } from '../../../utils/apiClient'
 import { playerboardErrorMessage } from '../../../utils/playerboardErrors'
-import { matchOutcome, scoreLabel, statValues } from '../../../utils/playerboardVeo'
-import { availabilityHint, isPartAvailable } from '../../../utils/playerboardVeoAnalysis'
-import type { VeoPlayerTableRow } from '../../../components/PlayerboardVeoPlayerTable.vue'
+import { matchOutcome, scoreLabel } from '../../../utils/playerboardVeo'
+import { availabilityHint, isPartAvailable, periodOptions } from '../../../utils/playerboardVeoAnalysis'
+import { matchPlayerRows, playerRowName, type VeoPlayerRow } from '../../../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 2: Spielauswertung eines Veo-Spiels wie Veos Analyse-Seite -- Reiter Mannschaft,
 // Spieler und Ereignisse. Jede Grafik erscheint nur, wenn Veo den Teil geliefert hat; sonst steht
@@ -12,6 +13,7 @@ import type { VeoPlayerTableRow } from '../../../components/PlayerboardVeoPlayer
 const route = useRoute()
 const { teams, team, teamId, organizationTimezone } = await usePlayerboardTeam()
 const { loadAnalysis, loadTracks } = usePlayerboardVeoAnalysis()
+const api = useApiClient()
 
 const fixtureId = computed(() => UuidSchema.safeParse(route.params.fixtureId).data ?? null)
 const requestedTeam = UuidSchema.safeParse(route.query.team).data
@@ -42,6 +44,23 @@ async function load() {
 await load()
 watch([teamId, fixtureId], () => { void load() })
 
+// Kader fuer Position und eigene Zeile in der Spielertabelle. Ohne Kader (Fehler, fehlendes Recht)
+// zeigt die Tabelle die Werte trotzdem, die Spielerkarte nimmt dann Veos Rueckfall-Kacheln.
+const roster = ref<PlayerboardPlayer[]>([])
+async function loadRoster() {
+  roster.value = []
+  if (!teamId.value) return
+  const requested = teamId.value
+  try {
+    const loaded = await api.request(`/v1/playerboard/teams/${requested}/players`, {}, PlayerboardPlayerSchema.array())
+    if (requested === teamId.value) roster.value = loaded
+  } catch {
+    // Nur Zusatzangaben; die Auswertung bleibt vollstaendig.
+  }
+}
+void loadRoster()
+watch(teamId, () => { void loadRoster() })
+
 type Tab = 'team' | 'players' | 'events'
 const tabs: { id: Tab; label: string }[] = [{ id: 'team', label: 'Mannschaft' }, { id: 'players', label: 'Spieler' }, { id: 'events', label: 'Ereignisse' }]
 const tab = ref<Tab>('team')
@@ -62,13 +81,13 @@ function playerLabel(side: 'own' | 'opponent', jerseyNumber: number | null): str
   const name = side === 'own' ? playersByJersey.value.get(jerseyNumber)?.name : null
   return name ? `#${jerseyNumber} ${name}` : `#${jerseyNumber}`
 }
-const playerRows = computed<VeoPlayerTableRow[]>(() => (analysis.value?.players ?? []).map((player) => ({
-  key: `${player.jerseyNumber}`,
-  label: `#${player.jerseyNumber} ${player.name ?? '· nicht zugeordnet'}`,
-  ...(player.personId ? { personId: player.personId } : {}),
-  values: statValues(player.stats),
-  muted: player.playerId === null,
-})))
+// Spielertabelle und Spielerkarte (Inventar §2.2, §2.3); die Halbzeitwahl gilt fuer beide.
+const playerPeriod = ref<number | null>(null)
+const playerRows = computed(() => matchPlayerRows(analysis.value?.players ?? [], roster.value, playerPeriod.value))
+const selectedKey = ref<string | null>(null)
+const selectedRow = computed<VeoPlayerRow | null>(() => playerRows.value.find((row) => row.key === selectedKey.value) ?? null)
+watch(analysis, () => { selectedKey.value = null; playerPeriod.value = null })
+const playerPeriodLabel = computed(() => periodOptions(analysis.value?.periods ?? []).find((option) => option.value === playerPeriod.value)?.label ?? 'Ganzes Spiel')
 
 const hint = (part: PlayerboardVeoAnalysisPart) => (analysis.value ? availabilityHint(analysis.value.availability, part) : null)
 const available = (part: PlayerboardVeoAnalysisPart) => Boolean(analysis.value && isPartAvailable(analysis.value.availability, part))
@@ -84,7 +103,17 @@ const dateLabel = computed(() => (analysis.value ? new Intl.DateTimeFormat('de-D
   weekday: 'short', day: 'numeric', month: 'long', year: 'numeric', timeZone: organizationTimezone.value,
 }).format(new Date(analysis.value.kickoffAt)) : ''))
 const outcome = computed(() => (analysis.value ? matchOutcome(analysis.value) : null))
-const tracksLoader = () => loadTracks(teamId.value!, fixtureId.value!)
+// Positionsdaten einmal je Spiel laden; Heatmap der Mannschaft und Spielerkarte teilen sie.
+let tracksRequest: { key: string; promise: Promise<PlayerboardVeoMatchTracks> } | null = null
+const tracksLoader = () => {
+  const key = `${teamId.value}:${fixtureId.value}`
+  if (tracksRequest?.key !== key) {
+    const promise = loadTracks(teamId.value!, fixtureId.value!)
+    promise.catch(() => { if (tracksRequest?.promise === promise) tracksRequest = null })
+    tracksRequest = { key, promise }
+  }
+  return tracksRequest.promise
+}
 
 // "So liest du ..." je Grafik (FR-004), nach Veos Erklaertexten.
 const READ_ME = {
@@ -94,6 +123,7 @@ const READ_ME = {
   possession: 'Die Ballbesitzzonen zeigen, in welchem Drittel eine Mannschaft den Ball hatte, durch Pässe und Dribblings.',
   passStrings: 'Passketten zählen, wie oft eine Mannschaft mehrere Pässe ohne Ballverlust aneinandergereiht hat. Viele kurze Ketten sprechen für direktes Spiel, lange für Spielkontrolle.',
   heatmap: 'Je röter die Fläche, desto mehr hielten sich die Feldspieler der Mannschaft dort auf – mit und ohne Ball. Mit den Schiebern wählst du einen Abschnitt der Halbzeit.',
+  players: 'Die Tabelle zeigt die Werte, die Veo den Rückennummern zugeordnet hat. Sortiere mit einem Klick auf den Spaltenkopf; ein Klick auf einen Spieler öffnet seine Karte mit Heatmap und Schusskarte. Graue Zeilen sind Nummern, die noch keinem Spieler zugeordnet sind.',
   momentum: 'Ausschläge nach oben zeigen Druck der Heimmannschaft in der gegnerischen Hälfte, nach unten Druck der Gastmannschaft. Je höher der Ausschlag, desto näher war das Geschehen am Tor. Veo rechnet das aus Positionen und Laufwegen.',
 } as const
 </script>
@@ -169,7 +199,33 @@ const READ_ME = {
       </div>
 
       <div v-else-if="tab === 'players'" id="veo-analysis-panel-players" role="tabpanel" aria-labelledby="veo-analysis-tab-players">
-        <PlayerboardVeoPlayerTable v-if="playerRows.length" :rows="playerRows" :caption="`Spielerwerte gegen ${opponentLabel}`" />
+        <template v-if="analysis.players.length">
+          <PlayerboardVeoPanelFilters v-model:period="playerPeriod" :periods="analysis.periods" :own-label="ownLabel" :opponent-label="opponentLabel" :with-team="false" />
+          <div class="grid gap-4 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+            <PlayerboardVeoAnalysisSection title="Spielerwerte" :read-me="READ_ME.players">
+              <PlayerboardVeoPlayerStatsTable
+                :rows="playerRows" :caption="`Spielerwerte gegen ${opponentLabel}, ${playerPeriodLabel}`" storage-key="vereinsfunk.veo.match-columns"
+                :default-columns="DEFAULT_MATCH_PLAYER_COLUMNS" :selected-key="selectedKey" @select="(row) => { selectedKey = row.key }"
+              />
+            </PlayerboardVeoAnalysisSection>
+            <!-- Auf dem Handy als Blatt von unten ueber der Tabelle, ab lg als Seitenleiste. -->
+            <div v-if="selectedRow" class="fixed inset-0 z-30 bg-black/30 lg:hidden" aria-hidden="true" @click="selectedKey = null" />
+            <div
+              v-if="selectedRow"
+              class="fixed inset-x-0 bottom-0 z-40 max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-[0_-8px_30px_rgba(0,0,0,.18)] lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:rounded-2xl lg:shadow-none"
+            >
+              <PlayerboardVeoPlayerCard :row="selectedRow" :source-label="`gegen ${opponentLabel} · ${playerPeriodLabel}`" @close="selectedKey = null">
+                <template #maps>
+                  <PlayerboardVeoPlayerMatchMaps
+                    v-if="selectedRow.jerseyNumber !== null" :key="selectedRow.key" :analysis="analysis" :jersey-number="selectedRow.jerseyNumber"
+                    :player-label="playerRowName(selectedRow)" :load-tracks="tracksLoader"
+                  />
+                </template>
+              </PlayerboardVeoPlayerCard>
+            </div>
+            <p v-else class="hidden rounded-2xl border border-dashed border-[#dfe0d9] p-4 text-sm text-[#6c756f] lg:block">Wähle einen Spieler, um seine Karte zu sehen.</p>
+          </div>
+        </template>
         <p v-else class="text-sm text-[#6c756f]">Veo hat zu diesem Spiel keine Spielerwerte geliefert.</p>
       </div>
 
