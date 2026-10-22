@@ -13,9 +13,14 @@ const route = useRoute()
 const router = useRouter()
 const { teams, team, teamId, organizationTimezone, canManage } = await usePlayerboardTeam()
 const { loadSeason, loadViews, saveViews } = usePlayerboardVeoSeason()
+const { loadMatches } = usePlayerboardVeo()
 
 const filter = ref<AnalyticsFilterState>(filterFromQuery(route.query))
 watch(filter, (value) => { void router.replace({ query: filterToQuery(value) }) }, { deep: true })
+watch(() => route.query, (query) => {
+  const next = filterFromQuery(query)
+  if (JSON.stringify(filterToQuery(filter.value)) !== JSON.stringify(filterToQuery(next))) filter.value = next
+}, { deep: true })
 
 const matches = ref<PlayerboardVeoSeasonMatch[]>([])
 const views = ref<PlayerboardVeoTeamViews>({ keyMetrics: [], radar: null })
@@ -74,7 +79,28 @@ async function save(patch: Partial<PlayerboardVeoTeamViews>) {
 }
 
 const ownLabel = computed(() => team.value?.name ?? 'Wir')
-const otherTeams = computed(() => teams.value.filter((entry) => entry.id !== teamId.value).map((entry) => ({ id: entry.id, name: entry.name })))
+const comparisonTeams = ref<{ id: string; name: string }[]>([])
+const comparisonRuns = useLatestRequest()
+watch([teams, teamId], async ([availableTeams, selectedTeamId]) => {
+  const isLatest = comparisonRuns.begin()
+  if (!selectedTeamId) {
+    comparisonTeams.value = []
+    return
+  }
+  const candidates = availableTeams.filter((entry) => entry.id !== selectedTeamId)
+  const visible = await Promise.all(candidates.map(async (candidate) => {
+    try {
+      // Der bestehende Endpunkt prueft Stats-Sicht serverseitig und liefert nur Mannschaften
+      // mit einer verbundenen Veo-Historie. Namen aus dem Scope allein reichen dafuer nicht.
+      const matches = await loadMatches(candidate.id, {})
+      return matches.length > 0 ? { id: candidate.id, name: candidate.name } : null
+    } catch {
+      return null
+    }
+  }))
+  if (isLatest()) comparisonTeams.value = visible.flatMap((candidate) => candidate ? [candidate] : [])
+}, { deep: true, immediate: true })
+const otherTeams = computed(() => comparisonTeams.value)
 const withoutAnalysis = computed(() => matches.value.filter((match) => match.analyticsVersion !== '2').length)
 const passThirds = computed(() => ({ own: seasonThirdPercents(matches.value, 'own', 'pass'), opponent: seasonThirdPercents(matches.value, 'opponent', 'pass') }))
 const possessionThirds = computed(() => ({ own: seasonThirdPercents(matches.value, 'own', 'possession'), opponent: seasonThirdPercents(matches.value, 'opponent', 'possession') }))
