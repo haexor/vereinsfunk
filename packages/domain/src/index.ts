@@ -10,6 +10,8 @@ export * from './llmProviders.js'
 export * from './modules.js'
 export * from './playerboard.js'
 export * from './veoPitch.js'
+export * from './veoMetrics.js'
+export * from './veoHeatmap.js'
 
 export { curatedFonts, curatedFontPairings, findCuratedFont, type CuratedFont, type CuratedFontPairing } from './fonts.js'
 export { contrastRatio, meetsMinimumContrast, MINIMUM_AA_CONTRAST, type ContrastCheck } from './contrast.js'
