@@ -83,7 +83,7 @@ const hasPhysical = computed(() => physical.value.some((entry) => entry.value !=
           <dl class="divide-y divide-[#eef0ea] text-sm">
             <div v-for="entry in section.rows" :key="entry.id" class="flex justify-between gap-2 py-1.5">
               <dt class="text-[#5b625d]">{{ entry.label }}</dt>
-              <dd class="tabular-nums" :class="entry.value ? 'font-semibold text-ink' : 'text-[#9aa19c]'">{{ formatPlayerMetric(entry.id, entry.value) }}</dd>
+              <dd class="tabular-nums" :class="entry.value !== undefined ? 'font-semibold text-ink' : 'text-[#9aa19c]'">{{ formatPlayerMetric(entry.id, entry.value) }}</dd>
             </div>
           </dl>
         </section>
