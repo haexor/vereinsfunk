@@ -72,6 +72,10 @@ Response: Array von `PlayerboardVeoSeasonMatchSchema`, ältestes Spiel zuerst. J
 
 Kennzahlen, Verlauf, Siegquote, Schusskarte, Zonen und Radar rechnet das Web mit `packages/domain` (R-08). Damit entfällt die frühere Planung, `GET …/veo/matches` zu erweitern und einen eigenen Endpunkt `…/veo/shots` anzulegen. `/playerboard/spiele` bleibt dadurch unverändert.
 
+## `GET /v1/playerboard/teams/:teamId/veo/season/team-heatmaps` (Veo Analytics, Heatmap der Mannschaft)
+
+Query wie bei `season`. Response `PlayerboardVeoTeamHeatmapSchema[]`: je gefiltertem Spiel und eigener Rückennummer `{ fixtureId, jerseyNumber, playerId | null, name | null, width, height, cells: base64, secondsPlayed | null }`, nur Matrizen des ganzen Spiels. Das Web summiert alle oder die eines Spielers nach Spielzeit gewichtet (R-05) und baut daraus die Spielerliste neben der Karte.
+
 ## `GET /v1/playerboard/teams/:teamId/veo/views`
 
 Response `PlayerboardVeoTeamViewsSchema` (siehe `PUT`). Hat die Mannschaft keine eigene Auswahl, kommen Veos Standards.

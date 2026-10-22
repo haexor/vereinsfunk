@@ -135,6 +135,7 @@ Rechte:
 | `playerboard_veo_team_season(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` (statt der Erweiterung von `playerboard_veo_team_matches`; diese bleibt unverändert) | Je Spiel Kopfdaten, `kind`, `analysisStatus`, `analyticsVersion`, Halbzeiten, Mannschaftswerte je Halbzeit, Pässe und Ballbesitz sowie Schüsse und Tore. Daraus rechnet `packages/domain` Kennzahlen, Schusskarte, Zonen und Radar. |
 | `playerboard_veo_player_season(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Je gefiltertem Spiel die Werte jeder Rückennummer als `{statType: value}` mit Zuordnung, Person und Name |
 | `playerboard_veo_player_heatmaps(target_team_id, target_player_id, target_jersey_number, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Matrizen des ganzen Spiels und Spielsekunden eines Spielers (über die Zuordnung) oder einer Nummer ohne Zuordnung je gefiltertem Spiel |
+| `playerboard_veo_team_heatmaps(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Matrizen des ganzen Spiels aller eigenen Rückennummern je gefiltertem Spiel, mit Zuordnung, Name und Spielsekunden |
 | `playerboard_veo_team_views(target_team_id)` | Einstellungen oder Standard |
 
 Filterregeln (FR-030), seit PR 5 an einer Stelle in `authz.playerboard_veo_season_fixture_ids`:
