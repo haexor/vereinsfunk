@@ -373,7 +373,8 @@ export const PlayerboardVeoSyncRunSchema = z.object({
   skippedCount: z.number().int(),
   conflictCount: z.number().int(),
   errorClass: z.string().nullable(),
-  progress: PlayerboardVeoSyncProgressSchema.nullable(),
+  // default: Antworten von vor Spec 002 kennen das Feld nicht.
+  progress: PlayerboardVeoSyncProgressSchema.nullable().default(null),
 })
 
 export const PlayerboardVeoStatusSchema = z.object({

@@ -214,7 +214,7 @@ export class VeoSyncExecutor {
           continue
         }
         progress.state.current = { opponentName: match.opponentName.slice(0, 200), step: 'values' }
-        await progress.report()
+        await progress.report(true)
         try {
           const { teamStats, players } = await this.withRetry(runId, async () => ({
             teamStats: await fetchTeamStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchIds: [match.veoMatchId] }, http),
@@ -234,8 +234,10 @@ export class VeoSyncExecutor {
             } else {
               progress.state.current = { opponentName: progress.state.current!.opponentName, step: 'analysis' }
               await progress.report(true)
-              if (await this.writeAnalysis(runId, accessToken, match, players, candidate, outcome, progress)) progress.state.analysesDone += 1
-              else analysisFailed = true
+              const written = await this.writeAnalysis(runId, accessToken, match, players, candidate, outcome, progress)
+              if (written === null) analysisFailed = true
+              // Ein Paket, an dem Veo noch rechnet, holt ein spaeterer Lauf; es zaehlt nicht als geladen.
+              else if (written === 'complete') progress.state.analysesDone += 1
             }
           }
         } catch (error) {
@@ -270,12 +272,13 @@ export class VeoSyncExecutor {
   /**
    * Spec 002: holt und schreibt das Analysepaket eines Spiels. Ein Fehler laesst nur das Paket weg
    * (die Summenwerte sind schon geschrieben) und markiert den Lauf als fehlgeschlagen; ein
-   * abgelaufenes Cookie oder eine geaenderte Antwortform beenden den Lauf wie bisher.
+   * abgelaufenes Cookie oder eine geaenderte Antwortform beenden den Lauf wie bisher. Liefert den
+   * Stand des geschriebenen Pakets, null wenn keins geschrieben wurde.
    */
   private async writeAnalysis(
     runId: string, accessToken: string, match: VeoMatch, players: VeoPlayerStats[], candidate: VeoAnalysisCandidate | undefined, outcome: VeoSyncFinish,
     progress: ProgressReporter,
-  ): Promise<boolean> {
+  ): Promise<PlayerboardVeoAnalysisWrite['status'] | null> {
     try {
       const analysis = await buildVeoAnalysis(
         { accessToken, veoMatchId: match.veoMatchId, veoTeamId: match.veoTeamId, fetchTracks: !candidate?.hasTracks, players },
@@ -294,16 +297,16 @@ export class VeoSyncExecutor {
         outcome.status = 'failed'
         outcome.errorClass ??= 'analysis_not_written'
         this.options.log({ runId, errorClass: 'analysis_not_written' }, 'veo analysis was not written')
-        return false
+        return null
       }
       this.options.log({ runId, status: analysis.status, events: analysis.events.length, heatmaps: analysis.heatmaps.length, tracks: analysis.tracks?.length ?? null }, 'veo analysis written')
-      return true
+      return analysis.status
     } catch (error) {
       if (error instanceof VeoError && RUN_ABORTING_CODES.has(error.code)) throw error
       outcome.status = 'failed'
       outcome.errorClass ??= error instanceof VeoError ? error.code : 'analysis_failed'
       this.options.log({ runId, errorClass: error instanceof VeoError ? error.code : 'analysis_failed', status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo analysis skipped')
-      return false
+      return null
     }
   }
 
