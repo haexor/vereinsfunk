@@ -169,6 +169,10 @@ declare
   target public.teams;
   v_comparing uuid;
   v_metrics text[];
+  v_own_from date;
+  v_own_to date;
+  v_comparing_from date;
+  v_comparing_to date;
 begin
   select * into target from public.teams where id = target_team_id;
   if not found or not authz.has_playerboard_team_permission(target_team_id, 'training.manage') then
@@ -180,7 +184,17 @@ begin
     raise exception 'invalid_metric' using errcode = '22023';
   end if;
   if p_radar is not null and jsonb_typeof(p_radar) <> 'null' then
-    if jsonb_typeof(p_radar->'metrics') <> 'array' then
+    if jsonb_typeof(p_radar) <> 'object'
+       or exists (
+         select 1 from jsonb_object_keys(p_radar) key
+          where key not in ('metrics', 'comparingTeamId', 'ownRange', 'comparingRange')
+       )
+       or coalesce(jsonb_typeof(p_radar->'metrics') <> 'array', true)
+       or coalesce(jsonb_typeof(p_radar->'ownRange') <> 'array', true)
+       or coalesce(jsonb_typeof(p_radar->'comparingRange') <> 'array', true) then
+      raise exception 'invalid_metric' using errcode = '22023';
+    end if;
+    if jsonb_array_length(p_radar->'ownRange') <> 2 or jsonb_array_length(p_radar->'comparingRange') <> 2 then
       raise exception 'invalid_metric' using errcode = '22023';
     end if;
     select array_agg(value) into v_metrics from jsonb_array_elements_text(p_radar->'metrics') value;
@@ -188,7 +202,23 @@ begin
        or (select count(distinct metric) from unnest(v_metrics) metric) <> 6 then
       raise exception 'invalid_metric' using errcode = '22023';
     end if;
-    v_comparing := nullif(p_radar->>'comparingTeamId', '')::uuid;
+    begin
+      v_own_from := (p_radar->'ownRange'->>0)::date;
+      v_own_to := (p_radar->'ownRange'->>1)::date;
+      v_comparing_from := (p_radar->'comparingRange'->>0)::date;
+      v_comparing_to := (p_radar->'comparingRange'->>1)::date;
+      v_comparing := nullif(p_radar->>'comparingTeamId', '')::uuid;
+    exception when others then
+      raise exception 'invalid_metric' using errcode = '22023';
+    end;
+    if v_own_from is null or v_own_to is null or v_comparing_from is null or v_comparing_to is null
+       or to_char(v_own_from, 'YYYY-MM-DD') <> (p_radar->'ownRange'->>0)
+       or to_char(v_own_to, 'YYYY-MM-DD') <> (p_radar->'ownRange'->>1)
+       or to_char(v_comparing_from, 'YYYY-MM-DD') <> (p_radar->'comparingRange'->>0)
+       or to_char(v_comparing_to, 'YYYY-MM-DD') <> (p_radar->'comparingRange'->>1)
+       or v_own_from > v_own_to or v_comparing_from > v_comparing_to then
+      raise exception 'invalid_metric' using errcode = '22023';
+    end if;
     if v_comparing is not null and (
          v_comparing = target_team_id
          or not exists (select 1 from public.teams other where other.id = v_comparing and other.organization_id = target.organization_id)

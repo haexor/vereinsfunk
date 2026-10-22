@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(23);
+select plan(25);
 
 set local role postgres;
 
@@ -136,6 +136,16 @@ select throws_ok(
   $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
       '{"metrics": ["goals_scored", "win_ratio"], "comparingTeamId": null}'::jsonb)$$,
   '22023', 'invalid_metric', 'the radar needs exactly six metrics'
+);
+select throws_ok(
+  $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
+      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": null}'::jsonb)$$,
+  '22023', 'invalid_metric', 'the radar needs both date ranges'
+);
+select throws_ok(
+  $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
+      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": null, "ownRange": ["2026-10-01", "2026-09-01"], "comparingRange": ["2026-08-01", "2026-08-31"]}'::jsonb)$$,
+  '22023', 'invalid_metric', 'a radar range cannot run backwards'
 );
 select throws_ok(
   $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
