@@ -275,3 +275,118 @@ export const PLAYER_CARD_SECTIONS: readonly { label: string; metrics: readonly s
   { label: 'Torwartspiel', metrics: ['saves'] },
 ]
 export const PLAYER_CARD_PHYSICAL = ['distance_covered', 'average_speed', 'top_speed', 'sprints'] as const
+
+// --- Saison (Inventar §2.1) ---------------------------------------------------------------------------
+
+export interface VeoSeasonPlayerInput {
+  jerseyNumber: number
+  playerId: string | null
+  personId: string | null
+  name: string | null
+  stats: Readonly<Record<string, number>>
+}
+
+export interface VeoSeasonPlayerRow {
+  // "player:<id>" fuer zugeordnete Spieler, "jersey:<n>" fuer Nummern ohne Zuordnung (Veo "ai-<n>").
+  key: string
+  playerId: string | null
+  personId: string | null
+  name: string | null
+  // Zuletzt getragene Nummer; ein Spieler kann von Spiel zu Spiel eine andere tragen.
+  jerseyNumber: number
+  matchCount: number
+  values: VeoPlayerMetricValues
+}
+
+/** Schluessel einer Saisonzeile: der Spieler, sonst die Rueckennummer. */
+export function seasonPlayerKey(player: { playerId: string | null; jerseyNumber: number | null }): string {
+  return player.playerId ? `player:${player.playerId}` : `jersey:${player.jerseyNumber}`
+}
+
+/**
+ * Saisonwerte je Spieler ueber die Spiele (aelteste zuerst): Summen, Hoechstgeschwindigkeit als
+ * Maximum, Durchschnittsgeschwindigkeit nach Spielzeit gewichtet (ohne Spielzeit als Mittel). Quoten
+ * und abgeleitete Werte kommen aus den Summen, wie Veos Saisontabelle sie zeigt.
+ */
+export function seasonPlayerRows(matches: readonly { players: readonly VeoSeasonPlayerInput[] }[]): VeoSeasonPlayerRow[] {
+  const groups = new Map<string, { row: Omit<VeoSeasonPlayerRow, 'values'>; sums: Map<string, number>; speed: { weighted: number; weight: number; plain: number; count: number } }>()
+  for (const match of matches) {
+    for (const player of match.players) {
+      const key = seasonPlayerKey(player)
+      const group = groups.get(key) ?? { row: { key, playerId: player.playerId, personId: player.personId, name: player.name, jerseyNumber: player.jerseyNumber, matchCount: 0 }, sums: new Map(), speed: { weighted: 0, weight: 0, plain: 0, count: 0 } }
+      groups.set(key, group)
+      group.row = { ...group.row, name: player.name ?? group.row.name, personId: player.personId ?? group.row.personId, jerseyNumber: player.jerseyNumber, matchCount: group.row.matchCount + 1 }
+      for (const [statType, value] of Object.entries(player.stats)) {
+        if (statType === 'average_speed_kmh') {
+          const seconds = player.stats.seconds_played_total ?? 0
+          group.speed.weighted += value * seconds
+          group.speed.weight += seconds
+          group.speed.plain += value
+          group.speed.count += 1
+        } else if (statType === 'top_speed_kmh') {
+          group.sums.set(statType, Math.max(group.sums.get(statType) ?? 0, value))
+        } else {
+          group.sums.set(statType, (group.sums.get(statType) ?? 0) + value)
+        }
+      }
+    }
+  }
+  return [...groups.values()].map(({ row, sums, speed }) => {
+    const stats = [...sums.entries()].map(([statType, value]) => ({ statType, value }))
+    if (speed.count > 0) stats.push({ statType: 'average_speed_kmh', value: speed.weight > 0 ? speed.weighted / speed.weight : speed.plain / speed.count })
+    const values = playerMetricValues(stats)
+    // Ohne Veos Zaehler "Spiele" gilt die Zahl der Spiele mit Werten.
+    values.matches ??= row.matchCount
+    return { ...row, values }
+  })
+}
+
+// Ranglisten (Inventar §2.1.1): Katalog ohne Paesse gesamt, Fehlpaesse, Passquote und Ballgewinne.
+export const VEO_LEADERBOARD_METRICS: readonly string[] = VEO_PLAYER_METRICS
+  .map((definition) => definition.id)
+  .filter((id) => !['total_events', 'passes', 'passes_unsuccessful', 'passes_success_rate', 'recoveries'].includes(id))
+export const DEFAULT_LEADERBOARD_METRICS = ['passes_successful', 'goals', 'high_intensity_runs'] as const
+export const LEADERBOARD_MAX = 3
+const LEADERBOARD_TOP = 5
+
+export interface VeoLeaderboardEntry<T> { rank: number; row: T; value: number }
+
+/**
+ * Die besten fuenf einer Kennzahl. Nur Werte ueber 0 zaehlen ("Keine Tore erkannt" statt einer Liste
+ * mit Nullen); gleiche Werte teilen den Rang und stehen nach Name.
+ */
+export function leaderboard<T extends VeoPlayerSortable>(rows: readonly T[], metric: string, top = LEADERBOARD_TOP): VeoLeaderboardEntry<T>[] {
+  const ranked = sortPlayerRows(rows.filter((row) => (row.values[metric] ?? 0) > 0), { column: metric, direction: 'desc' })
+  return ranked.slice(0, top).map((row, index, list) => {
+    const value = row.values[metric]!
+    const first = list.findIndex((other) => other.values[metric] === value)
+    return { rank: first + 1, row, value }
+  })
+}
+
+// Spielervergleich (Inventar §2.1.5): Gruppen und Reihenfolge wie Veo.
+export const PLAYER_COMPARISON_GROUPS: readonly { label: string; metrics: readonly string[] }[] = [
+  { label: 'Allgemein', metrics: ['matches', 'total_events', 'player_of_the_match', 'captaincies'] },
+  { label: 'Physis', metrics: ['minutes_played', 'distance_covered', 'average_speed', 'top_speed', 'high_intensity_runs', 'sprints'] },
+  { label: 'Verteilung', metrics: ['passes', 'passes_success_rate', 'passes_successful', 'passes_unsuccessful'] },
+  { label: 'Angriff', metrics: ['assists', 'conversion_rate', 'dribbles', 'goals', 'goal_involvements', 'shots', 'total_attempts'] },
+  { label: 'Verteidigung', metrics: ['tackles', 'duels', 'interceptions', 'loose_ball_recoveries'] },
+  { label: 'Standardsituationen', metrics: ['corners', 'free_kicks', 'goal_kicks', 'penalty_kicks', 'throw_ins', 'fouls'] },
+  { label: 'Torwartspiel', metrics: ['saves'] },
+]
+
+export interface VeoPlayerComparisonRow { id: string; a: number | undefined; b: number | undefined; higher: 'a' | 'b' | null }
+
+/** Zwei Spieler nebeneinander; Zeilen ohne Wert bei beiden entfallen, der hoehere Wert ist markiert. */
+export function comparePlayers(a: VeoPlayerMetricValues, b: VeoPlayerMetricValues): { label: string; rows: VeoPlayerComparisonRow[] }[] {
+  return PLAYER_COMPARISON_GROUPS.map((group) => ({
+    label: group.label,
+    rows: group.metrics.flatMap((id) => {
+      const left = a[id]
+      const right = b[id]
+      if (left === undefined && right === undefined) return []
+      const higher = (left ?? -Infinity) > (right ?? -Infinity) ? 'a' : (right ?? -Infinity) > (left ?? -Infinity) ? 'b' : null
+      return [{ id, a: left, b: right, higher } as VeoPlayerComparisonRow]
+    }),
+  })).filter((group) => group.rows.length > 0)
+}

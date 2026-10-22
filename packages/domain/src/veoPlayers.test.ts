@@ -1,8 +1,11 @@
 import { describe, expect, it } from 'vitest'
 import {
+  comparePlayers,
+  DEFAULT_LEADERBOARD_METRICS,
   DEFAULT_MATCH_PLAYER_COLUMNS,
   DEFAULT_SEASON_PLAYER_COLUMNS,
   isVeoParticipant,
+  leaderboard,
   nextPlayerSort,
   PLAYER_CARD_PHYSICAL,
   PLAYER_CARD_SECTIONS,
@@ -10,8 +13,10 @@ import {
   playerMetricDefinition,
   playerMetricValues,
   playerStatsForPeriod,
+  seasonPlayerRows,
   sortPlayerRows,
   validPlayerColumns,
+  VEO_LEADERBOARD_METRICS,
   VEO_PLAYER_METRICS,
   veoPositionCode,
 } from './veoPlayers.js'
@@ -129,5 +134,51 @@ describe('player card', () => {
     expect(playerFocusTiles('Stürmer')).toEqual(['total_attempts', 'goals', 'assists', 'conversion_rate'])
     expect(playerFocusTiles('RV')).toEqual(playerFocusTiles('LV'))
     expect(playerFocusTiles(null)).toEqual(['distance_covered', 'top_speed', 'total_attempts', 'duels'])
+  })
+})
+
+describe('season', () => {
+  const ada = 'ada-id'
+  const matches = [
+    { players: [
+      { jerseyNumber: 7, playerId: ada, personId: 'person-ada', name: 'Ada Arnold', stats: { football_goal_total: 2, football_attempts_total: 4, top_speed_kmh: 26, average_speed_kmh: 6, seconds_played_total: 3000, matches_total: 1 } },
+      { jerseyNumber: 12, playerId: null, personId: null, name: null, stats: { football_goal_total: 1 } },
+    ] },
+    { players: [
+      { jerseyNumber: 10, playerId: ada, personId: 'person-ada', name: 'Ada Arnold', stats: { football_goal_total: 1, football_attempts_total: 2, top_speed_kmh: 29, average_speed_kmh: 9, seconds_played_total: 1000, matches_total: 1 } },
+      { jerseyNumber: 12, playerId: null, personId: null, name: null, stats: { football_goal_total: 0 } },
+    ] },
+  ]
+
+  it('sums a player across changing jerseys and keeps unassigned jerseys apart (Inventar §2.1.2)', () => {
+    const rows = seasonPlayerRows(matches)
+    expect(rows.map((row) => row.key)).toEqual(['player:ada-id', 'jersey:12'])
+    expect(rows[0]).toMatchObject({ jerseyNumber: 10, matchCount: 2, name: 'Ada Arnold' })
+    expect(rows[0]?.values).toMatchObject({ goals: 3, total_attempts: 6, shots: 3, conversion_rate: 50, top_speed: 29, matches: 2, minutes_played: 67 })
+    // 6 km/h ueber 3000 s und 9 km/h ueber 1000 s.
+    expect(rows[0]?.values.average_speed).toBeCloseTo(6.75)
+    expect(rows[1]?.values).toMatchObject({ goals: 1, matches: 2 })
+  })
+
+  it('ranks the top five above zero, sharing ranks on ties (Inventar §2.1.1)', () => {
+    const rows = [
+      { name: 'Ben', jerseyNumber: 9, values: { goals: 3 } },
+      { name: 'Ada', jerseyNumber: 7, values: { goals: 3 } },
+      { name: 'Cem', jerseyNumber: 4, values: { goals: 1 } },
+      { name: 'Dana', jerseyNumber: 5, values: { goals: 0 } },
+      { name: null, jerseyNumber: 12, values: {} },
+    ]
+    expect(leaderboard(rows, 'goals').map((entry) => [entry.rank, entry.row.name, entry.value])).toEqual([[1, 'Ada', 3], [1, 'Ben', 3], [3, 'Cem', 1]])
+    expect(leaderboard(rows, 'saves')).toEqual([])
+    expect(DEFAULT_LEADERBOARD_METRICS.every((id) => VEO_LEADERBOARD_METRICS.includes(id))).toBe(true)
+    expect(VEO_LEADERBOARD_METRICS).not.toContain('passes_success_rate')
+  })
+
+  it('compares two players by group and marks the higher value (Inventar §2.1.5)', () => {
+    const groups = comparePlayers({ goals: 3, matches: 2, top_speed: 25 }, { goals: 1, matches: 2 })
+    expect(groups.map((group) => group.label)).toEqual(['Allgemein', 'Physis', 'Angriff'])
+    expect(groups[0]?.rows).toEqual([{ id: 'matches', a: 2, b: 2, higher: null }])
+    expect(groups[1]?.rows).toEqual([{ id: 'top_speed', a: 25, b: undefined, higher: 'a' }])
+    expect(groups[2]?.rows).toEqual([{ id: 'goals', a: 3, b: 1, higher: 'a' }])
   })
 })
