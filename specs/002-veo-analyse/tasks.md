@@ -238,26 +238,26 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 **Independent Test**: [quickstart.md](quickstart.md) §2, Schritt 3 (Spielertabelle und Spielerkarte).
 
-- [ ] T044 [P] [US2] Test in `packages/domain/src/veoMetrics.test.ts`, Teil Spieler, vor T045:
+- [X] T044 [P] [US2] Test in `packages/domain/src/veoPlayers.test.ts` (eigene Datei statt `veoMetrics.test.ts`), Teil Spieler, vor T045:
   - Ableitungen aus Inv. §4.2.1: `MissedShots`, `passes_unsuccessful`, `passes_success_rate`, `GoalInvolvements`, `ConversionRate`, `TotalEvents`, Minuten aus Sekunden
   - Kacheln je Position aus Inv. §2.3 (alle Positionscodes und der Rückfall)
   - Standardspalten der Tabelle aus Inv. §2.2
-- [ ] T045 [US2] `packages/domain/src/veoMetrics.ts`, Teil Spieler, mit dem Spalten- und Gruppenkatalog: Bezeichnungen und Kürzel deutsch, Gruppen Allgemein, Physis und Ereignisse.
-- [ ] T046 [US2] `apps/web/app/components/PlayerboardVeoPlayerTable.vue` erweitern:
+- [X] T045 [US2] `packages/domain/src/veoPlayers.ts` (eigene Datei), Teil Spieler, mit dem Spalten- und Gruppenkatalog: Bezeichnungen und Kürzel deutsch, Gruppen Allgemein, Physis und Ereignisse.
+- [X] T046 [US2] Neue Komponente `apps/web/app/components/PlayerboardVeoPlayerStatsTable.vue` (statt `PlayerboardVeoPlayerTable.vue` zu erweitern, das die öffentliche Seite und die Veo-Seite unverändert nutzen):
   - Spalten wählbar nach Gruppen, mindestens 1, gespeichert in `localStorage` unter `vereinsfunk.veo.match-columns`. Zugriffe in `try/catch`, sodass die Tabelle auch ohne Speicher funktioniert.
   - Jede Spalte sortierbar, `aria-sort`
   - Spielername als `PersonLink`, öffnet die Spielerkarte
   - nicht zugeordnete Nummern als „#7“ ohne Link, Zuordnung durch Trainer wie bisher
   - Tabelle scrollt in sich (`w-0 min-w-full`)
-- [ ] T047 [US2] `apps/web/app/components/PlayerboardVeoPlayerCard.vue`:
+- [X] T047 [US2] `apps/web/app/components/PlayerboardVeoPlayerCard.vue` (Karten-Reiter im Spiel: `PlayerboardVeoPlayerMatchMaps.vue`, Schusskarte im Halbfeld: `PlayerboardVeoPlayerShotMap.vue`; der Spielername öffnet die Karte, „Profil öffnen“ führt zum Profil):
   - Reiter Übersicht (4 Kacheln nach Position), Werte (Gruppen aus Inv. §2.3), Physis, Karten
   - Karten: Heatmap je Halbzeit mit Schieber über die Positionsdaten der Rückennummer, sonst Veo-Matrix der Halbzeit; Schusskarte im Halbfeld mit Toren, verfehlten Schüssen, Abschlüssen und Quote
   - Link „Profil öffnen“ (`PersonLink`)
   - Hinweise „Keine Rückennummer zugeordnet“ und „Von Veo nicht erkannt“
   - Als Dialog auf dem Handy, als Seitenleiste ab `lg`
-- [ ] T048 [US2] Reiter Spieler in `apps/web/app/pages/playerboard/spiele/[fixtureId].vue` auf Tabelle und Karte umstellen. Die Halbzeitwahl wirkt auf die Tabelle (Werte je Halbzeit aus `periodValues`).
-- [ ] T049 [P] [US2] Web-Tests in `apps/web/app/utils/playerboardVeoPlayers.test.ts`: Sortierung (Namen zuerst, fehlende Werte zuletzt, Zahlen beim ersten Klick absteigend, Inv. §2.1.2), Spaltenauswahl mit ungültigem Speicherinhalt ergibt Standard, Zeilen ohne Werte und ohne Position entfallen.
-- [ ] T050 [US2] Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 3, und §4. PR 3 öffnen.
+- [X] T048 [US2] Reiter Spieler in `apps/web/app/pages/playerboard/spiele/[fixtureId].vue` auf Tabelle und Karte umstellen. Die Halbzeitwahl wirkt auf die Tabelle (Werte je Halbzeit aus `periodValues`).
+- [X] T049 [P] [US2] Web-Tests in `apps/web/app/utils/playerboardVeoPlayers.test.ts` (die Sortierung prüft `packages/domain/src/veoPlayers.test.ts`): Sortierung (Namen zuerst, fehlende Werte zuletzt, Zahlen beim ersten Klick absteigend, Inv. §2.1.2), Spaltenauswahl mit ungültigem Speicherinhalt ergibt Standard, Zeilen ohne Werte und ohne Position entfallen.
+- [ ] T050 [US2] (lokal geprüft: C1 bei 1280 und 360 px ohne seitliches Scrollen und ohne Konsolenfehler, Karte mit Heatmap aus den Positionsdaten; offen ist der Vergleich mit Veo) Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 3, und §4. PR 3 öffnen.
 
 **Checkpoint**: Story 1 und 2 laufen unabhängig voneinander.
 
