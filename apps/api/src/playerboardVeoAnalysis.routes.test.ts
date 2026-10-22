@@ -175,3 +175,44 @@ describe('Veo Analytics: GET .../veo/season and GET/PUT .../veo/views', () => {
     expect(response.json()).toMatchObject({ error: 'not_found' })
   })
 })
+
+describe('Veo Analytics players: GET .../veo/season/players and .../veo/season/heatmaps', () => {
+  const PLAYERS_URL = `/v1/playerboard/teams/${TEAM_ID}/veo/season/players`
+  const HEATMAPS_URL = `/v1/playerboard/teams/${TEAM_ID}/veo/season/heatmaps`
+  const PLAYER_ID = '57000000-2000-4000-8000-000000000001'
+
+  it('passes the season filters and answers only schema conform player values', async () => {
+    const calls: RpcCall[] = []
+    const match = {
+      fixtureId: FIXTURE_ID, kickoffAt: '2026-09-23T14:54:40+00:00', opponentName: 'Gegner', ownScore: 2, opponentScore: 1, analyticsVersion: '2',
+      players: [{ jerseyNumber: 7, playerId: PLAYER_ID, personId: null, name: 'Ada Arnold', stats: { football_goal_total: 2 } }],
+    }
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_player_season: { data: [match], error: null } }, calls) })
+    const response = await get(app, `${PLAYERS_URL}?last=5&kinds=match`)
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([match])
+    expect(calls.at(-1)).toEqual({ name: 'playerboard_veo_player_season', args: { target_team_id: TEAM_ID, from_date: null, to_date: null, kinds: ['match'], fixture_ids: null, last_n: 5 } })
+  })
+
+  it('reads the heatmaps of a player or a bare jersey and rejects both or neither', async () => {
+    const calls: RpcCall[] = []
+    const heatmap = { fixtureId: FIXTURE_ID, jerseyNumber: 12, width: 60, height: 30, cells: 'AAE=', secondsPlayed: 2700 }
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_player_heatmaps: { data: [heatmap], error: null } }, calls) })
+    const response = await get(app, `${HEATMAPS_URL}?jerseyNumber=12&fixtureIds=${FIXTURE_ID}`)
+    expect(response.statusCode).toBe(200)
+    expect(response.json()).toEqual([heatmap])
+    expect(calls.at(-1)).toEqual({ name: 'playerboard_veo_player_heatmaps', args: {
+      target_team_id: TEAM_ID, target_player_id: null, target_jersey_number: 12, from_date: null, to_date: null, kinds: null, fixture_ids: [FIXTURE_ID], last_n: null,
+    } })
+    expect((await get(app, HEATMAPS_URL)).statusCode).toBe(400)
+    expect((await get(app, `${HEATMAPS_URL}?jerseyNumber=12&playerId=${PLAYER_ID}`)).statusCode).toBe(400)
+  })
+
+  it('answers 404 for a player of another team and 403 without sight of the stats', async () => {
+    const other = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ ...visible, playerboard_veo_player_heatmaps: { data: null, error: { message: 'veo_player_not_found', code: 'P0002' } } }) })
+    expect((await get(other, `${HEATMAPS_URL}?playerId=${PLAYER_ID}`)).statusCode).toBe(404)
+    const hidden = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ playerboard_can_view_stats: { data: false, error: null } }) })
+    expect((await get(hidden, PLAYERS_URL)).statusCode).toBe(403)
+    expect((await get(hidden, `${HEATMAPS_URL}?jerseyNumber=12`)).statusCode).toBe(403)
+  })
+})

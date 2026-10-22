@@ -101,6 +101,8 @@ const triggerErrors: Readonly<Record<string, number>> = {
   // Spec 002, PR 4: Veo Analytics.
   invalid_metric: 422,
   invalid_filter: 400,
+  // Spec 002, PR 5: Heatmaps eines Spielers, der nicht zur Mannschaft gehoert.
+  veo_player_not_found: 404,
 }
 
 /**

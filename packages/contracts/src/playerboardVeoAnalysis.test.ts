@@ -3,6 +3,8 @@ import {
   PlayerboardVeoAnalysisWriteSchema,
   PlayerboardVeoMatchAnalysisSchema,
   PlayerboardVeoMatchTracksSchema,
+  PlayerboardVeoPlayerHeatmapsQuerySchema,
+  PlayerboardVeoPlayerSeasonMatchSchema,
   PlayerboardVeoSeasonMatchSchema,
   PlayerboardVeoSeasonQuerySchema,
   PlayerboardVeoTeamViewsSchema,
@@ -125,5 +127,23 @@ describe('Veo Analytics season contracts', () => {
     expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: [], radar: { ...radar, metrics: radar.metrics.slice(0, 5) } }).success).toBe(false)
     expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: [], radar: { ...radar, ownRange: ['2026-09-30', '2026-09-01'] } }).success).toBe(false)
     expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: ['expected_goals'], radar: null }).success).toBe(false)
+  })
+})
+
+describe('Veo Analytics player contracts', () => {
+  it('accepts the values of every jersey per match as a map', () => {
+    const match = {
+      fixtureId: '57000000-1000-4000-8000-000000000001', kickoffAt: '2026-09-05T10:00:00+00:00', opponentName: null, ownScore: null, opponentScore: null, analyticsVersion: null,
+      players: [{ jerseyNumber: 7, playerId: null, personId: null, name: null, stats: { football_goal_total: 2, top_speed_kmh: 27.4 } }],
+    }
+    expect(PlayerboardVeoPlayerSeasonMatchSchema.parse(match).players[0]?.stats.top_speed_kmh).toBe(27.4)
+    expect(PlayerboardVeoPlayerSeasonMatchSchema.safeParse({ ...match, players: [{ ...match.players[0], stats: { football_goal_total: '2' } }] }).success).toBe(false)
+  })
+
+  it('asks the heatmaps of either a player or a bare jersey with the season filters', () => {
+    expect(PlayerboardVeoPlayerHeatmapsQuerySchema.parse({ jerseyNumber: '12', last: '5' })).toEqual({ jerseyNumber: 12, last: 5 })
+    expect(PlayerboardVeoPlayerHeatmapsQuerySchema.parse({ playerId: '57000000-1000-4000-8000-000000000001' }).playerId).toBeDefined()
+    expect(PlayerboardVeoPlayerHeatmapsQuerySchema.safeParse({}).success).toBe(false)
+    expect(PlayerboardVeoPlayerHeatmapsQuerySchema.safeParse({ playerId: '57000000-1000-4000-8000-000000000001', jerseyNumber: '7' }).success).toBe(false)
   })
 })
