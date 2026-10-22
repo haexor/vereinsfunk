@@ -2,6 +2,7 @@
 import { AlertTriangle, CheckCircle2, LoaderCircle, RefreshCw, Video } from '@lucide/vue'
 import type { PlayerboardVeoConflict, PlayerboardVeoLoginResponse, PlayerboardVeoStatus } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
+import { deferredAnalyses, SYNC_POLL_LIMIT_MS, syncFraction, syncSilentMinutes, syncStepText } from '../../utils/playerboardVeoSync'
 
 // Paket 053, PR 3: Veo verbinden und abgleichen (playerboard.manage auf der Mannschaft). E-Mail und
 // Passwort gehen einmal an die API, die sich damit bei Veo anmeldet; gespeichert wird nur das
@@ -14,7 +15,10 @@ const status = ref<PlayerboardVeoStatus | null>(null)
 const conflicts = ref<PlayerboardVeoConflict[]>([])
 const errorMessage = ref('')
 const notice = ref('')
-const running = computed(() => status.value?.runs[0]?.status === 'running')
+const latestRun = computed(() => status.value?.runs[0])
+const running = computed(() => latestRun.value?.status === 'running')
+// Zeitpunkt des letzten Ladens; daran misst die Seite, wie lange der Abgleich schon schweigt.
+const loadedAt = ref(Date.now())
 
 /** Laedt Status und offene mehrdeutige Spiele der gewaehlten Mannschaft. */
 const loadRuns = useLatestRequest()
@@ -31,19 +35,22 @@ async function load() {
     if (!isLatest()) return
     status.value = loadedStatus
     conflicts.value = loadedConflicts
+    loadedAt.value = Date.now()
   } catch (error) {
     if (isLatest()) errorMessage.value = playerboardErrorMessage(error, 'Der Veo-Status konnte nicht geladen werden.')
   }
 }
 
 // Fragt den Status alle drei Sekunden ab, solange ein Lauf laeuft -- auch einen, der schon beim
-// Oeffnen der Seite lief. Hoechstens drei Minuten ab dem letzten Anstoss: einen haengenden Lauf
-// gibt erst der taegliche Abgleich frei. usePolling haelt nach dem Verlassen der Seite an.
+// Oeffnen der Seite lief. Ein Lauf mit Spielanalysen dauert bis zu zehn Minuten; gefragt wird bis
+// SYNC_POLL_LIMIT_MS nach seinem Start, danach gilt er als haengend und der naechste Anstoss gibt
+// ihn frei. pollUntil deckt den Moment ab, bevor ein neuer Lauf im Status erscheint. usePolling
+// haelt nach dem Verlassen der Seite an.
 let pollUntil = 0
 const { ensurePolling } = usePolling(async () => {
   await load()
   if (!running.value) notice.value = ''
-}, () => running.value && Date.now() < pollUntil, 3_000)
+}, () => running.value && (Date.now() < pollUntil || Date.now() - Date.parse(latestRun.value!.startedAt) < SYNC_POLL_LIMIT_MS), 3_000)
 function watchRun() {
   pollUntil = Date.now() + 180_000
   ensurePolling()
@@ -173,9 +180,16 @@ function runSummary(run: PlayerboardVeoStatus['runs'][number]): string {
   if (run.status === 'running') return 'läuft gerade …'
   const parts = [`${run.createdCount} neu`, `${run.updatedCount} aktualisiert`]
   if (run.conflictCount) parts.push(`${run.conflictCount} unklar`)
+  if (deferredAnalyses(run)) parts.push(`${deferredAnalyses(run)} ${deferredAnalyses(run) === 1 ? 'Analyse' : 'Analysen'} offen`)
   if (run.errorClass) parts.push(ERROR_TEXT[run.errorClass] ?? run.errorClass)
   return parts.join(' · ')
 }
+// Zwischenstand des laufenden Abgleichs fuer den Balken.
+const progress = computed(() => (running.value ? latestRun.value!.progress : null))
+const fraction = computed(() => syncFraction(progress.value))
+const silentMinutes = computed(() => (latestRun.value ? syncSilentMinutes(latestRun.value, loadedAt.value) : null))
+// Offene Analysen des letzten fertigen Laufs: ein weiterer Abgleich holt sie.
+const openAnalyses = computed(() => (running.value ? 0 : deferredAnalyses(latestRun.value)))
 const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white px-3 text-sm text-ink'
 const buttonClass = 'focus-ring inline-flex min-h-11 items-center gap-2 rounded-xl bg-forest px-4 text-xs font-bold text-white disabled:opacity-60'
 const secondaryButtonClass = 'focus-ring inline-flex min-h-11 items-center gap-2 rounded-xl border border-[#dfe0d9] bg-white px-4 text-xs font-semibold text-ink disabled:opacity-60'
@@ -216,6 +230,28 @@ const secondaryButtonClass = 'focus-ring inline-flex min-h-11 items-center gap-2
             <button v-if="!reconnecting" type="button" :class="secondaryButtonClass" @click="reconnecting = true">Neu verbinden</button>
           </div>
         </div>
+        <div v-if="running" class="mt-4 rounded-xl border border-[#e8e9e2] bg-[#f7f8f3] p-3" role="status" aria-live="polite">
+          <div class="flex items-baseline justify-between gap-2 text-xs">
+            <span class="font-semibold text-ink">{{ syncStepText(progress) }}</span>
+            <span v-if="fraction !== null" class="tabular-nums text-[#5b625d]">{{ Math.round(fraction * 100) }} %</span>
+          </div>
+          <div
+            class="mt-2 h-2 overflow-hidden rounded-full bg-[#e4e6de]" role="progressbar" aria-label="Fortschritt des Abgleichs"
+            aria-valuemin="0" aria-valuemax="100" :aria-valuenow="fraction === null ? undefined : Math.round(fraction * 100)"
+          >
+            <div v-if="fraction === null" class="h-full w-1/3 animate-pulse rounded-full bg-forest/50" />
+            <div v-else class="h-full rounded-full bg-forest transition-[width] duration-700" :style="{ width: `${fraction * 100}%` }" />
+          </div>
+          <p v-if="progress && (progress.analysesDone || progress.analysesDeferred)" class="mt-2 text-xs text-[#6c756f]">
+            {{ progress.analysesDone }} {{ progress.analysesDone === 1 ? 'Spielanalyse' : 'Spielanalysen' }} geladen<template v-if="progress.analysesDeferred"> · {{ progress.analysesDeferred }} {{ progress.analysesDeferred === 1 ? 'folgt' : 'folgen' }} im nächsten Abgleich</template>
+          </p>
+          <p v-if="silentMinutes !== null" class="mt-2 flex items-start gap-2 text-xs text-amber-800">
+            <AlertTriangle :size="14" class="mt-0.5 shrink-0" /> Seit {{ silentMinutes }} Minuten keine Rückmeldung vom Abgleich.
+          </p>
+        </div>
+        <p v-else-if="openAnalyses" class="mt-4 rounded-xl bg-[#f7f8f3] p-3 text-xs text-[#5b625d]">
+          {{ openAnalyses === 1 ? 'Eine Spielanalyse ist' : `${openAnalyses} Spielanalysen sind` }} noch offen, weil ein Abgleich nur etwa fünf Minuten lang Analysen lädt. „Jetzt abgleichen“ holt den Rest.
+        </p>
         <p v-if="status.needsReconnect" class="mt-4 flex items-start gap-2 rounded-xl bg-[#fbeee6] p-3 text-sm text-amber-800">
           <AlertTriangle :size="16" class="mt-0.5 shrink-0" /> Veo nimmt die gespeicherte Anmeldung nicht mehr an. Bitte verbinde Veo neu, sonst kommen keine neuen Spiele.
         </p>

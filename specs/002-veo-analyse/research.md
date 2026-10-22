@@ -68,6 +68,11 @@ Die heutigen Summenwerte bleiben bei jedem Lauf für alle Spiele, wie in Paket 0
 - „Analyse neu laden“ gilt für jedes Spiel, dessen Paket älter ist als die Anforderung. Ein unterbrochenes Neuladen setzt so fort, statt von vorn zu beginnen. Das Feld wird erst geleert, wenn kein Paket verschoben wurde.
 - Ausbau: ein eigener Workflow je Spiel, falls Mannschaften mit langer Historie dazukommen.
 
+**Fortschritt** (nach dem ersten Lauf in Produktion ergänzt, 2026-10-22): Ohne Zwischenstand sah ein Lauf von fünf bis zehn Minuten wie hängend aus, und die Seite fragte nur drei Minuten nach.
+- Der Worker schreibt den Stand nach `integration_sync_runs.progress`: Spiele gesamt und fertig, geladene und verschobene Analysen, das Spiel in Arbeit mit Schritt und bei Positionsdaten die geladenen 30-s-Fenster.
+- Wechsel von Spiel und Schritt schreibt er sofort, die Fenster höchstens alle 3 Sekunden. Ein Schreibfehler wird nur geloggt.
+- Die Seite fragt bis 35 Minuten nach dem Start nach. Sie zeigt einen Balken, den Schritt und nach drei Minuten ohne neuen Stand einen Hinweis. Nach dem Lauf nennt sie die offenen Analysen, die der nächste Abgleich holt.
+
 **Rationale**: Je Spiel kommen etwa 12 bis 14 Abrufe dazu, Tracking nicht mitgezählt. Bei 40 Spielen und täglichem Lauf wären das sonst über 500 Abrufe täglich gegen eine inoffizielle API. Korrekturen in Veo passieren erfahrungsgemäß in den Tagen nach dem Spiel.
 
 **Alternatives considered**:

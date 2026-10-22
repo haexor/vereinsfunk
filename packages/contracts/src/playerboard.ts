@@ -345,6 +345,24 @@ export const PlayerboardVeoLinkRequestSchema = z.object({
   veoTeamSlug: VeoSlugSchema,
 }).strict()
 
+// Spec 002: Zwischenstand eines Veo-Laufs (integration_sync_runs.progress). matchesTotal zaehlt die
+// Spiele mit Analyse und Endstand; current ist das Spiel in Arbeit, bei 'tracks' mit den schon
+// geladenen 30-s-Fenstern der Positionsdaten. analysesDeferred sind Analysen, die das Zeitbudget
+// des Laufs auf den naechsten verschiebt.
+export const PlayerboardVeoSyncProgressSchema = z.object({
+  matchesTotal: z.number().int().nonnegative(),
+  matchesDone: z.number().int().nonnegative(),
+  analysesDone: z.number().int().nonnegative(),
+  analysesDeferred: z.number().int().nonnegative(),
+  current: z.object({
+    opponentName: z.string().max(200),
+    step: z.enum(['values', 'analysis', 'tracks']),
+    tracksDone: z.number().int().nonnegative().optional(),
+    tracksTotal: z.number().int().nonnegative().optional(),
+  }).nullable(),
+  updatedAt: z.string(),
+})
+
 export const PlayerboardVeoSyncRunSchema = z.object({
   id: UuidSchema,
   status: z.enum(['running', 'succeeded', 'failed', 'cancelled', 'aborted_loss_threshold']),
@@ -355,6 +373,7 @@ export const PlayerboardVeoSyncRunSchema = z.object({
   skippedCount: z.number().int(),
   conflictCount: z.number().int(),
   errorClass: z.string().nullable(),
+  progress: PlayerboardVeoSyncProgressSchema.nullable(),
 })
 
 export const PlayerboardVeoStatusSchema = z.object({
@@ -479,3 +498,4 @@ export type AssignPlayerboardVeoJerseyRequest = z.infer<typeof AssignPlayerboard
 export type PlayerboardVeoConflict = z.infer<typeof PlayerboardVeoConflictSchema>
 export type ResolvePlayerboardVeoConflictRequest = z.infer<typeof ResolvePlayerboardVeoConflictRequestSchema>
 export type PlayerboardVeoSyncRun = z.infer<typeof PlayerboardVeoSyncRunSchema>
+export type PlayerboardVeoSyncProgress = z.infer<typeof PlayerboardVeoSyncProgressSchema>

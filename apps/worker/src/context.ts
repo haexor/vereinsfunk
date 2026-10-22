@@ -474,6 +474,11 @@ export function createVeoSyncRepository(config: WorkerEnvironment): VeoSyncRepos
         .eq('team_id', teamId).eq('analysis_refresh_requested_at', requestedAt)
       if (error) throw error
     },
+    async reportProgress(runId, progress) {
+      // Ein schon beendeter oder freigegebener Lauf behaelt seinen letzten Stand.
+      const { error } = await client.from('integration_sync_runs').update({ progress }).eq('id', runId).eq('status', 'running')
+      if (error) throw error
+    },
     async applyMatch(runId, match) {
       const { data, error } = await client.rpc('playerboard_veo_apply_match', { p_run_id: runId, p_match: match })
       if (error) throw error

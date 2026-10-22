@@ -79,6 +79,16 @@ describe('buildVeoAnalysis', () => {
     expect(calls.filter((url) => url.hostname === 'dt3kfuz4eo879.cloudfront.net')).toHaveLength(2)
   })
 
+  it('reports every loaded window of the tracks against their total', async () => {
+    const { fetch } = veoFetch()
+    const reported: [number, number][] = []
+    await buildVeoAnalysis(request, { ...deps(fetch), onTracks: async (done, total) => { reported.push([done, total]) } })
+    const total = Math.ceil(1968 / 30) + Math.ceil(2173 / 30)
+    expect(reported).toHaveLength(total + 1)
+    expect(reported[0]).toEqual([0, total])
+    expect(reported.at(-1)).toEqual([total, total])
+  })
+
   it('keeps stored tracks and does not fetch them again', async () => {
     const { fetch, calls } = veoFetch()
     const analysis = await buildVeoAnalysis({ ...request, fetchTracks: false }, deps(fetch))
