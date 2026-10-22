@@ -285,14 +285,14 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - `playerboard_veo_team_shots`
   - Tabelle `playerboard_veo_team_views` nach [data-model.md](data-model.md): `key_metrics` text[] not null mit 0–4 Einträgen aus dem Kennzahlenkatalog; `radar` jsonb null; Fremdschlüssel `(organization_id, team_id)` auf `teams`; RLS lesen `can_view_playerboard_stats`, kein direktes Schreiben.
   - `playerboard_veo_team_views(team)` und `playerboard_veo_save_team_views(team, jsonb)`, Recht `training.manage`.
-- [ ] T053 [P] [US3] Test in `packages/domain/src/veoMetrics.test.ts`, Teil Saison, vor T054:
+- [X] T053 [P] [US3] Test in `packages/domain/src/veoMetrics.test.ts`, Teil Saison, vor T054:
   - Kennzahlenkatalog der Mannschaft aus Inv. §1b.3 (Tabelle „Edit key metrics modal“) mit Einheit und Berechnung je Spiel
   - Durchschnitt nur über Spiele mit Wert
   - Siegquote und Sieg/Remis/Niederlage (Inv. §1a.9)
   - Standardkennzahlen `[possession_percent, goals_scored, shots_on_goal]`
   - Radar-Normierung `own/max(own, cmp) * 0.9` und Standard-Radar (Inv. §1b.8)
   - Form der letzten 3 Spiele
-- [ ] T054 [US3] `packages/domain/src/veoMetrics.ts`, Teil Saison.
+- [X] T054 [US3] `packages/domain/src/veoSeason.ts` (eigene Datei statt Teil von `veoMetrics.ts`), Teil Saison.
 - [X] T055 [P] [US3] Contracts:
   - `PlayerboardVeoSeasonQuerySchema`, Erweiterung von `PlayerboardVeoMatchSchema`
   - `PlayerboardVeoShotsSchema` und `PlayerboardVeoTeamViewsSchema` mit `keyMetrics` 0–4 eindeutig und `radar.metrics` genau 6
