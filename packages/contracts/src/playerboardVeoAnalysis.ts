@@ -306,6 +306,9 @@ export const PlayerboardVeoPlayerHeatmapSchema = z.object({
   secondsPlayed: z.int().nonnegative().nullable(),
 })
 
+// Alle Matrizen des ganzen Spiels der eigenen Rueckennummern fuer die Heatmap der Mannschaft.
+export const PlayerboardVeoTeamHeatmapSchema = PlayerboardVeoPlayerHeatmapSchema.extend({ playerId: UuidSchema.nullable(), name: z.string().nullable() })
+
 const unique = (values: readonly string[]) => new Set(values).size === values.length
 const DateRangeSchema = z.tuple([z.iso.date(), z.iso.date()]).refine(([from, to]) => from <= to, 'range must not end before it starts')
 
@@ -337,6 +340,7 @@ export type PlayerboardVeoKeyMetricId = z.infer<typeof PlayerboardVeoKeyMetricId
 export type PlayerboardVeoPlayerSeasonMatch = z.infer<typeof PlayerboardVeoPlayerSeasonMatchSchema>
 export type PlayerboardVeoPlayerHeatmapsQuery = z.infer<typeof PlayerboardVeoPlayerHeatmapsQuerySchema>
 export type PlayerboardVeoPlayerHeatmap = z.infer<typeof PlayerboardVeoPlayerHeatmapSchema>
+export type PlayerboardVeoTeamHeatmap = z.infer<typeof PlayerboardVeoTeamHeatmapSchema>
 export type PlayerboardVeoSeasonQuery = z.infer<typeof PlayerboardVeoSeasonQuerySchema>
 export type PlayerboardVeoSeasonMatch = z.infer<typeof PlayerboardVeoSeasonMatchSchema>
 export type PlayerboardVeoTeamViews = z.infer<typeof PlayerboardVeoTeamViewsSchema>
