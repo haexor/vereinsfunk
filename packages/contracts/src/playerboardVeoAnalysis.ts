@@ -1,4 +1,5 @@
 import { z } from 'zod'
+import { FixtureKindSchema } from './clubSchedule.js'
 import { PlayerboardVeoStatSchema } from './playerboard.js'
 import { UuidSchema } from './primitives.js'
 
@@ -206,6 +207,83 @@ export const PlayerboardVeoMatchTracksSchema = z.object({
   tracks: z.array(PlayerboardVeoAnalysisTrackSchema),
 })
 
+// --- Veo Analytics: Saison der Mannschaft (Inventar §1b) ------------------------------------------
+
+// Kennzahlenkatalog wie Veos "Edit key metrics" (Inventar §1b.3); SQL authz.playerboard_veo_key_metric_ids
+// und packages/domain VEO_TEAM_KEY_METRICS fuehren dieselben IDs.
+export const PlayerboardVeoKeyMetricIdSchema = z.enum([
+  'possession_percent', 'possession_minutes', 'possession_won',
+  'possession_location_in_defensive_third', 'possession_location_in_middle_third', 'possession_location_in_attacking_third',
+  'pass_location_in_defensive_third', 'pass_location_in_middle_third', 'pass_location_in_attacking_third',
+  'passes_completed', 'three_to_five_passes', 'six_or_more_passes', 'longest_pass_string',
+  'goals_scored', 'goals_conceded', 'kick_free_kick', 'shots_on_goal', 'shots_conceded', 'kick_corner', 'kick_goalie',
+  'kick_penalty', 'throw_in', 'foul', 'tackles', 'duels', 'dribbles', 'interceptions', 'loose_ball_recoveries', 'saves',
+  'shots_to_goal_conversion_rate', 'total_attempts', 'total_attempts_conceded', 'attacking_events', 'defensive_events', 'win_ratio',
+])
+
+/** Kommagetrennte Query-Liste ("a,b") als Array; leer oder fehlend = kein Filter. */
+function commaList<T extends z.ZodType>(item: T) {
+  return z.preprocess(
+    (value) => (typeof value === 'string' ? value.split(',').map((entry) => entry.trim()).filter(Boolean) : value),
+    z.array(item).min(1).max(100),
+  ).optional()
+}
+
+// Filter wie Veos Analytics Studio: Zeitraum, Spielart, die letzten n Spiele oder eine Auswahl, die
+// dann allein gilt.
+export const PlayerboardVeoSeasonQuerySchema = z.object({
+  from: z.iso.date().optional(),
+  to: z.iso.date().optional(),
+  kinds: commaList(FixtureKindSchema),
+  last: z.coerce.number().int().min(1).max(100).optional(),
+  fixtureIds: commaList(UuidSchema),
+}).strict()
+
+export const PlayerboardVeoSeasonMatchSchema = z.object({
+  fixtureId: UuidSchema,
+  kickoffAt: z.string(),
+  kind: FixtureKindSchema,
+  opponentName: z.string().nullable(),
+  isHome: z.boolean().nullable(),
+  ownScore: z.int().nullable(),
+  opponentScore: z.int().nullable(),
+  veoUrl: z.url().nullable(),
+  analysisStatus: z.enum(['none', 'pending', 'complete', 'unavailable']),
+  analyticsVersion: PlayerboardVeoAnalyticsVersionSchema.nullable(),
+  periods: z.array(PlayerboardVeoPeriodSchema),
+  availability: PlayerboardVeoAvailabilitySchema,
+  teamStats: z.array(ReadStatSchema.extend({ teamAssociation: z.enum(['own', 'opponent']) })),
+  passPossession: PlayerboardVeoPassPossessionSchema.nullable(),
+  // Nur FootballShot und FootballGoal; playerId nur bei eigenen.
+  shots: z.array(z.object({
+    id: z.string().min(1),
+    teamAssociation: z.enum(['own', 'opponent']),
+    eventType: z.enum(['FootballShot', 'FootballGoal']),
+    jerseyNumber: VeoJerseySchema.nullable(),
+    playerId: UuidSchema.nullable(),
+    periodNumber: z.int().min(1),
+    periodTimeMs: z.int().nonnegative(),
+    videoTimeMs: z.int().nonnegative(),
+    x: UnitSchema.nullable(),
+    y: UnitSchema.nullable(),
+    assistJerseyNumber: VeoJerseySchema.nullable(),
+  })),
+})
+
+const unique = (values: readonly string[]) => new Set(values).size === values.length
+const DateRangeSchema = z.tuple([z.iso.date(), z.iso.date()]).refine(([from, to]) => from <= to, 'range must not end before it starts')
+
+// Kennzahlen (bis 4, leer = Veos Standard) und Vergleichsradar (genau 6) je Mannschaft.
+export const PlayerboardVeoTeamViewsSchema = z.object({
+  keyMetrics: z.array(PlayerboardVeoKeyMetricIdSchema).max(4).refine(unique, 'key metrics must be unique'),
+  radar: z.object({
+    metrics: z.array(PlayerboardVeoKeyMetricIdSchema).length(6).refine(unique, 'radar metrics must be unique'),
+    comparingTeamId: UuidSchema.nullable(),
+    ownRange: DateRangeSchema,
+    comparingRange: DateRangeSchema,
+  }).strict().nullable(),
+}).strict()
+
 export type PlayerboardVeoAnalysisPart = z.infer<typeof PlayerboardVeoAnalysisPartSchema>
 export type PlayerboardVeoAvailabilityReason = z.infer<typeof PlayerboardVeoAvailabilityReasonSchema>
 export type PlayerboardVeoAvailability = z.infer<typeof PlayerboardVeoAvailabilitySchema>
@@ -219,3 +297,7 @@ export type PlayerboardVeoPeriod = z.infer<typeof PlayerboardVeoPeriodSchema>
 export type PlayerboardVeoMatchAnalysis = z.infer<typeof PlayerboardVeoMatchAnalysisSchema>
 export type PlayerboardVeoMatchEvent = PlayerboardVeoMatchAnalysis['events'][number]
 export type PlayerboardVeoMatchTracks = z.infer<typeof PlayerboardVeoMatchTracksSchema>
+export type PlayerboardVeoKeyMetricId = z.infer<typeof PlayerboardVeoKeyMetricIdSchema>
+export type PlayerboardVeoSeasonQuery = z.infer<typeof PlayerboardVeoSeasonQuerySchema>
+export type PlayerboardVeoSeasonMatch = z.infer<typeof PlayerboardVeoSeasonMatchSchema>
+export type PlayerboardVeoTeamViews = z.infer<typeof PlayerboardVeoTeamViewsSchema>
