@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { blurGrid, heatmapFocusThird, heatmapLut, renderHeatmap, teamHeatmapFromTracks } from './veoHeatmap.js'
+import { blurGrid, heatmapFocusThird, heatmapLut, playerHeatmapFromTracks, renderHeatmap, teamHeatmapFromTracks } from './veoHeatmap.js'
 import { encodeTrackSamples, HEATMAP_HEIGHT, HEATMAP_WIDTH } from './veoPitch.js'
 
 const periods = [
@@ -33,6 +33,18 @@ describe('teamHeatmapFromTracks', () => {
     const tracks = [track('left', 100, 0.2, 50), track('left', 150, 0.7, 50)]
     expect(columnOf(teamHeatmapFromTracks(tracks, periods, 'own', 150, 199)!)).toBe(42)
     expect(teamHeatmapFromTracks(tracks, periods, 'own', 200, 299)).toBeNull()
+  })
+})
+
+describe('playerHeatmapFromTracks', () => {
+  it('takes the tracks of the jersey on the own side only, the goalkeeper included', () => {
+    const tracks = [
+      { ...track('left', 100, 0.2, 100, true), jerseyNumber: 1 },
+      { ...track('right', 100, 0.7, 100), jerseyNumber: 1 },
+      { ...track('left', 100, 0.5, 100), jerseyNumber: 7 },
+    ]
+    expect(columnOf(playerHeatmapFromTracks(tracks, periods, 1, 100, 199)!)).toBe(12)
+    expect(playerHeatmapFromTracks(tracks, periods, 9, 100, 199)).toBeNull()
   })
 })
 

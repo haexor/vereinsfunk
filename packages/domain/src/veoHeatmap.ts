@@ -19,6 +19,8 @@ export interface StoredTrack {
   side: PitchSide
   goalkeeper: boolean
   startS: number
+  // Haeufigste erkannte Rueckennummer der Spur; fehlt bei der Mannschafts-Heatmap.
+  jerseyNumber?: number | null
   // Je Sekunde x/y als uint16, siehe encodeTrackSamples.
   samples: Uint8Array
 }
@@ -29,9 +31,20 @@ export interface StoredTrack {
  * rechts angreift. Null, wenn im Abschnitt keine Probe der Mannschaft liegt.
  */
 export function teamHeatmapFromTracks(tracks: readonly StoredTrack[], periods: readonly PitchPeriod[], team: PitchTeam, fromS: number, toS: number): Float32Array | null {
+  return heatmapFromTracks(tracks.filter((track) => !track.goalkeeper), periods, team, fromS, toS)
+}
+
+/**
+ * Heatmap eines eigenen Spielers aus den Spuren seiner Rueckennummer (Spielerkarte, Inventar §2.3
+ * "Heat map interval"). Torhueter zaehlen hier mit. Null ohne Probe im Abschnitt.
+ */
+export function playerHeatmapFromTracks(tracks: readonly StoredTrack[], periods: readonly PitchPeriod[], jerseyNumber: number, fromS: number, toS: number): Float32Array | null {
+  return heatmapFromTracks(tracks.filter((track) => track.jerseyNumber === jerseyNumber), periods, 'own', fromS, toS)
+}
+
+function heatmapFromTracks(tracks: readonly StoredTrack[], periods: readonly PitchPeriod[], team: PitchTeam, fromS: number, toS: number): Float32Array | null {
   const points: PitchPoint[] = []
   for (const track of tracks) {
-    if (track.goalkeeper) continue
     decodeTrackSamples(track.samples).forEach((point, index) => {
       const second = track.startS + index
       if (!point || second < fromS || second > toS) return
