@@ -116,7 +116,7 @@ Primärschlüssel `(fixture_id, veo_track_id)`.
 | Spalte | Typ | Regel |
 |---|---|---|
 | `team_id` | `uuid` PK | |
-| `organization_id` | `uuid` not null | Fremdschlüssel `(organization_id, team_id)` auf `teams`. |
+| `organization_id`, `department_id` | `uuid` not null | Fremdschlüssel `(organization_id, department_id, team_id)` auf `teams`, deren eindeutiger Schlüssel diese drei Spalten sind. |
 | `key_metrics` | `text[]` not null | 0–4 Einträge, jeder aus dem Kennzahlenkatalog. Leer heißt Veo-Standard. |
 | `radar` | `jsonb` null | `{metrics: text[6], comparingTeamId: uuid\|null, ownRange: [date, date], comparingRange: [date, date]}`. |
 | `updated_by` | `uuid` null | Fremdschlüssel auf `profiles`. |
@@ -132,8 +132,7 @@ Rechte:
 |---|---|
 | `playerboard_veo_match_analysis(target_team_id, target_fixture_id)` | Ein JSON mit Spiel, Halbzeiten, Verfügbarkeit, Mannschafts- und Spielerwerten je Halbzeit (inkl. Zuordnung und Namen), Ereignissen beider Mannschaften (eigene mit `playerId`), Heatmap-Matrizen, Pass- und Ballbesitzdaten, Spielverlauf, Passnetz, Bericht |
 | `playerboard_veo_match_tracks(target_team_id, target_fixture_id)` | Positionsdaten des Spiels als Spuren je Seite mit `periods`. Die Zuordnung zu eigener Mannschaft und Gegner macht `packages/domain` beim Lesen. Ohne gespeicherte Spuren liefert die Funktion eine leere Liste. |
-| `playerboard_veo_team_matches(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` (**bestehend, erweitert**) | Wie bisher je Spiel Kopfdaten sowie Mannschafts- und Spielerwerte. Neu sind die Filter, `kind`, `analysisStatus`, `analyticsVersion`, `periodValues` der Spielerwerte, die Drittel-Anteile und `personId`. Die Signatur mit drei Argumenten bleibt als Überladung, damit `/playerboard/spiele` und die öffentliche Ausgabe unverändert laufen. |
-| `playerboard_veo_team_shots(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Alle Schüsse und Tore der gefilterten Spiele mit Ort, Mannschaft und `playerId` (nur eigene). Grundlage für die Saison-Schusskarten. |
+| `playerboard_veo_team_season(target_team_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` (statt der Erweiterung von `playerboard_veo_team_matches`; diese bleibt unverändert) | Je Spiel Kopfdaten, `kind`, `analysisStatus`, `analyticsVersion`, Halbzeiten, Mannschaftswerte je Halbzeit, Pässe und Ballbesitz sowie Schüsse und Tore. Daraus rechnet `packages/domain` Kennzahlen, Schusskarte, Zonen und Radar. |
 | `playerboard_veo_player_heatmaps(target_team_id, target_player_id, from_date, to_date, kinds text[], fixture_ids uuid[], last_n int)` | Matrizen des ganzen Spiels und Spielsekunden des Spielers je gefiltertem Spiel |
 | `playerboard_veo_team_views(target_team_id)` | Einstellungen oder Standard |
 

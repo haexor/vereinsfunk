@@ -54,30 +54,29 @@ Nur wenn `hasTracking` gilt. Response `{ sampleHz: 1, periods: Period[], tracks:
 
 Nur wenn `hasReport` gilt. Response `PlayerboardVeoMatchReportSchema`: die Abschnitte `overview`, `attacking`, `defensive`, `passing` und `physical` mit `StatValue = { fullTime: { own, opponent }, periods: { periodNumber, own, opponent }[], comparison?: { difference, matchCount } }`, dazu `scorers` und `lineup` mit `playerId`/`name` aus der Zuordnung, sowie die Geschwindigkeitszonen. Felder, die Veo nicht liefert, werden weggelassen, nicht genullt.
 
-## `GET /v1/playerboard/teams/:teamId/veo/matches` (bestehend, erweitert)
+## `GET /v1/playerboard/teams/:teamId/veo/season` (Veo Analytics)
 
-Grundlage der Saisonsicht. Die Query `PlayerboardVeoSeasonQuerySchema` erweitert die bisherigen Parameter `from` und `to`:
+Grundlage der Saisonsicht „Veo Analytics“ (Nachbau von Veos Analytics Studio). Query `PlayerboardVeoSeasonQuerySchema`:
+- `from`, `to` (Datum, optional)
 - `kinds` (kommagetrennt, optional)
 - `last` (1–100, optional)
 - `fixtureIds` (kommagetrennt, optional; schließt die anderen Filter aus)
 
-Jedes Element von `PlayerboardVeoMatchSchema` bekommt zusätzlich:
-- `kind`, `analyticsVersion` und `analysisStatus`,
-- `thirds: { pass: Thirds | null, possession: Thirds | null }`, wobei `Thirds = { defensive, middle, attacking }` als Anteile zwischen 0 und 1,
-- `periodValues` je Spielerwert,
-- `personId` je Spieler.
+Response: Array von `PlayerboardVeoSeasonMatchSchema`, ältestes Spiel zuerst. Je Spiel:
+- Kopf: `fixtureId`, `kickoffAt`, `kind`, Gegner, Heim, Ergebnis, `veoUrl`
+- `analysisStatus` und `analyticsVersion`
+- `periods` und `availability`
+- `teamStats` mit `periodValues`
+- `passPossession`
+- `shots`: nur `FootballShot` und `FootballGoal`, eigene mit `playerId`
 
-Bestehende Felder bleiben unverändert. `/playerboard/spiele` braucht deshalb keine Änderung.
-
-## `GET /v1/playerboard/teams/:teamId/veo/shots`
-
-Query wie oben. Response `{ items: { fixtureId: uuid, teamAssociation: 'own' | 'opponent', playerId: uuid | null, jerseyNumber: int | null, x: number | null, y: number | null, goal: boolean, videoTimeMs: int }[] }`.
+Kennzahlen, Verlauf, Siegquote, Schusskarte, Zonen und Radar rechnet das Web mit `packages/domain` (R-08). Damit entfällt die frühere Planung, `GET …/veo/matches` zu erweitern und einen eigenen Endpunkt `…/veo/shots` anzulegen. `/playerboard/spiele` bleibt dadurch unverändert.
 
 ## `GET /v1/playerboard/teams/:teamId/veo/views`
 
 Response `PlayerboardVeoTeamViewsSchema` (siehe `PUT`). Hat die Mannschaft keine eigene Auswahl, kommen Veos Standards.
 
-Ranglisten, Tabelle, Vergleich, Durchschnitte, Kennzahlen je Spiel und Radar rechnet das Web mit `packages/domain` aus `matches` und `shots`. So gilt eine Regel an einer Stelle (R-08). Für das Radar mit einer anderen Mannschaft ruft das Web dieselben Endpunkte für deren `teamId` auf. Darf die Person deren Werte nicht sehen, kommt `404`.
+Ranglisten, Tabelle, Vergleich, Durchschnitte, Kennzahlen je Spiel und Radar rechnet das Web mit `packages/domain` aus `season` (Spieler aus `matches`). So gilt eine Regel an einer Stelle (R-08). Für das Radar mit einer anderen Mannschaft ruft das Web dieselben Endpunkte für deren `teamId` auf. Darf die Person deren Werte nicht sehen, kommt `404`.
 
 ## `GET /v1/playerboard/teams/:teamId/veo/season/players/:playerId/heatmaps`
 
