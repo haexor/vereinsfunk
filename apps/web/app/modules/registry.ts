@@ -85,6 +85,8 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
       { label: 'Übersicht', to: '/playerboard', icon: Trophy },
       { label: 'Rangliste', to: '/playerboard/rangliste', icon: Medal },
       { label: 'Spiele', to: '/playerboard/spiele', icon: Goal },
+      // Spec 002: Nachbau von Veos Analytics Studio fuer die Saison der Mannschaft.
+      { label: 'Veo Analytics', to: '/playerboard/analytics', icon: BarChart3 },
       { label: 'Trainings', to: '/playerboard/trainings', icon: ClipboardList },
       { label: 'Kader', to: '/playerboard/kader', icon: Users },
     ],
