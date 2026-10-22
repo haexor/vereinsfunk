@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { PlayerboardPlayerSchema, type PlayerboardPlayer, type PlayerboardVeoMatch } from '@vereinsfunk/contracts'
-import { playerboardErrorMessage } from '../../utils/playerboardErrors'
-import { personIdLookup, scoreLabel, veoSeasonMatches } from '../../utils/playerboardVeo'
-import type { VeoCardMatch } from '../../components/PlayerboardVeoMatchCard.vue'
+import { playerboardErrorMessage } from '../../../utils/playerboardErrors'
+import { personIdLookup, scoreLabel, veoSeasonMatches } from '../../../utils/playerboardVeo'
+import type { VeoCardMatch } from '../../../components/PlayerboardVeoMatchCard.vue'
 
 // Paket 053, PR 3: Spiele mit Veo-Werten fuer alle, die die Kennzahlen der Mannschaft sehen
 // (training.view oder stats_visibility). Trainer ordnen hier Rueckennummern dem Kader zu.
@@ -133,6 +133,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
             :match="selectedMatch"
             :timezone="organizationTimezone"
             :roster="canManage ? roster : undefined"
+            :analysis-link="`/playerboard/spiele/${selectedMatch.fixtureId}?team=${teamId}`"
             @assigned="load(true)"
           />
         </section>

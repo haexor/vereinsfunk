@@ -45,7 +45,7 @@ describe('PlayerBoard-Seiten', () => {
   })
 
   it('uebernimmt den Saisonanfang der Spiele erst nach der Pruefung auf eine neuere Anfrage', () => {
-    const load = functionBody(read('playerboard/spiele.vue'), 'load')
+    const load = functionBody(read('playerboard/spiele/index.vue'), 'load')
 
     expect(load).not.toContain('seasonFrom.value = await')
     expect(load.indexOf('if (!isLatest()) return')).toBeGreaterThan(-1)
@@ -53,7 +53,7 @@ describe('PlayerBoard-Seiten', () => {
   })
 
   it('teilt sich die Zeitraumwahl zwischen Rangliste und Spielen', () => {
-    for (const page of ['playerboard/rangliste.vue', 'playerboard/spiele.vue']) {
+    for (const page of ['playerboard/rangliste.vue', 'playerboard/spiele/index.vue']) {
       const source = read(page)
       expect(source).toContain('<PlayerboardPeriodPicker v-model="period" :periods="periods" :season-from="seasonFrom"')
       expect(source).not.toContain('role="radiogroup"')
