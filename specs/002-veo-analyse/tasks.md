@@ -301,16 +301,16 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - `GET …/veo/matches` mit Filtern (in `veo.ts`)
   - `GET …/veo/shots`, `GET` und `PUT …/veo/views` in `veoAnalysis.ts`; `PUT` mit Audit-Eintrag nach dem Muster in `routes/playerboard/settings.ts`; Fehler `422 invalid_metric`, `404 not_found`
   - Tests in `apps/api/src/playerboardVeoAnalysis.routes.test.ts`
-- [ ] T057 [P] [US3] `apps/web/app/components/PlayerboardVeoFilters.vue`: Spielart, Zeitraum, „letzte n“, Einzelauswahl. Der Zustand liegt in der URL-Query, damit Links geteilt werden können.
-- [ ] T058 [P] [US3] `apps/web/app/components/PlayerboardVeoKeyMetrics.vue`:
+- [X] T057 [P] [US3] `apps/web/app/components/PlayerboardVeoFilters.vue`: Spielart, Zeitraum, „letzte n“, Einzelauswahl. Der Zustand liegt in der URL-Query, damit Links geteilt werden können.
+- [X] T058 [P] [US3] `apps/web/app/components/PlayerboardVeoKeyMetrics.vue`:
   - Karten mit Durchschnitt und Hilfetext, Verlauf als Balken je Spiel (7 Teilstriche, Inv. §1b.3), Siegquote mit S/U/N
   - Antippen eines Balkens zeigt Gegner, Datum, Ergebnis und Link zur Spielauswertung
   - Dialog „Kennzahlen bearbeiten“ (max. 4) nur mit `training.manage`
   - Hinweis, wenn nur ein Teil der Spiele beiträgt
-- [ ] T059 [P] [US3] `apps/web/app/components/PlayerboardVeoRadar.vue`: Radar mit 6 Achsen, zwei Flächen, Gitter bei 25/50/75/100 %, Beschriftung „eigen · Vergleich“. Wahl einer Mannschaft des Vereins mit Veo-Verbindung und Sicht, oder „Keine“ (Zeitraumvergleich). Dialog „Kennzahlen bearbeiten“ (genau 6). Textersatz als Tabelle.
-- [ ] T060 [US3] `apps/web/app/composables/usePlayerboardVeoSeason.ts` und Seite `apps/web/app/pages/playerboard/analytics.vue` (Betreiberwunsch: eigener Sidebar-Eintrag „Veo Analytics“ als Nachbau von Veos Analytics Studio), Reiter Mannschaft: Filter, Kennzahlen, Schusskarte (`PlayerboardVeoShotMap` im Saisonmodus), Drittel, Radar. Navigation „Saison“ neben „Spiele“ in `apps/web/app/modules/registry.ts`.
+- [X] T059 [P] [US3] `apps/web/app/components/PlayerboardVeoRadar.vue`: Radar mit 6 Achsen, zwei Flächen, Gitter bei 25/50/75/100 %, Beschriftung „eigen · Vergleich“. Wahl einer Mannschaft des Vereins mit Veo-Verbindung und Sicht, oder „Keine“ (Zeitraumvergleich). Dialog „Kennzahlen bearbeiten“ (genau 6). Textersatz als Tabelle.
+- [X] T060 [US3] `apps/web/app/composables/usePlayerboardVeoSeason.ts` und Seite `apps/web/app/pages/playerboard/analytics.vue` (Betreiberwunsch: eigener Sidebar-Eintrag „Veo Analytics“ als Nachbau von Veos Analytics Studio), Reiter Mannschaft: Filter, Kennzahlen, Schusskarte (`PlayerboardVeoShotMap` im Saisonmodus), Drittel, Radar. Navigation „Saison“ neben „Spiele“ in `apps/web/app/modules/registry.ts`.
 - [ ] T061 [US3] Kopf der Spielauswertung (`spiele/[fixtureId].vue`): Kennzahlen der Mannschaft für dieses Spiel und Form der letzten 3 Spiele (Inv. §1a.9).
-- [ ] T062 [US3] Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 5 (Mannschaft), sowie §3 und §4. PR 4 öffnen.
+- [ ] T062 [US3] (lokal geprüft: C1 mit 8 Spielen bei 1280 und 360 px ohne seitliches Scrollen und ohne Konsolenfehler; offen ist der Vergleich mit Veos Analytics Studio) Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 5 (Mannschaft), sowie §3 und §4. PR 4 öffnen.
 
 **Checkpoint**: Story 3 nutzbar, Stories 1 und 2 unverändert.
 
