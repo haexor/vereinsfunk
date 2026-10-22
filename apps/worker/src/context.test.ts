@@ -42,3 +42,15 @@ it('claimPending releases an invalid outbox row individually and keeps the valid
   expect(claimed.map((entry) => entry.id)).toEqual([valid.id])
   expect(rpc).toHaveBeenCalledWith('release_workflow_outbox', { p_outbox_id: invalid.id, p_claim_token: invalid.claim_token, p_error_class: 'invalid_outbox_row' })
 })
+
+// Regression: die Produktions-PostgREST liefert die eingebettete Analyse als Liste; das Schema
+// erwartete Objekt oder null, und jeder Veo-Abgleich endete mit einem ZodError.
+it('reads the embedded Veo match analysis as a list, an object or null', async () => {
+  const { VeoAnalysisCandidateRowSchema } = await import('./context.js')
+  const row = { veo_match_id: 'm1', analysis_status: 'complete', analysis_fetched_at: null, fixture: { kickoff_at: '2026-10-03T08:52:55+00:00' } }
+  const availability = { tracking: { status: 'available' } }
+  expect(VeoAnalysisCandidateRowSchema.parse({ ...row, analysis: [] }).analysis).toBeNull()
+  expect(VeoAnalysisCandidateRowSchema.parse({ ...row, analysis: [{ availability }] }).analysis).toEqual({ availability })
+  expect(VeoAnalysisCandidateRowSchema.parse({ ...row, analysis: { availability } }).analysis).toEqual({ availability })
+  expect(VeoAnalysisCandidateRowSchema.parse({ ...row, analysis: null }).analysis).toBeNull()
+})

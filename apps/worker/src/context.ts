@@ -397,12 +397,17 @@ const VeoApplyResultSchema: z.ZodType<VeoApplyResult> = z.enum(['created', 'upda
 const VeoRunRowSchema = z.object({ source_id: UuidSchema, status: z.string().min(1) })
 const VeoLinkRowSchema = z.object({ team_id: UuidSchema, veo_club_slug: z.string().min(1), veo_team_slug: z.string().min(1), analysis_refresh_requested_at: z.string().nullable() })
 // Spec 002: Analysestand je Veo-Spiel; tracking.status 'available' heisst, Positionsdaten liegen schon vor.
-const VeoAnalysisCandidateRowSchema = z.object({
+export const VeoAnalysisCandidateRowSchema = z.object({
   veo_match_id: z.string().min(1),
   analysis_status: z.enum(['none', 'pending', 'complete', 'unavailable']),
   analysis_fetched_at: z.string().nullable(),
   fixture: z.object({ kickoff_at: z.string() }),
-  analysis: z.object({ availability: z.record(z.string(), z.object({ status: z.string() }).loose()) }).nullable(),
+  // PostgREST erkennt die Beziehung nicht als 1:1 (Fremdschluessel ueber drei Spalten, Primaerschluessel
+  // nur fixture_id) und liefert je nach Version eine Liste statt Objekt oder null.
+  analysis: z.preprocess(
+    (value) => (Array.isArray(value) ? (value[0] ?? null) : value),
+    z.object({ availability: z.record(z.string(), z.object({ status: z.string() }).loose()) }).nullable(),
+  ),
 })
 const VeoTeamRowSchema = z.object({ name: z.string().min(1) })
 const VeoSecretRowSchema = z.object({ secret_ciphertext: z.string(), key_version: z.string().min(1) })
