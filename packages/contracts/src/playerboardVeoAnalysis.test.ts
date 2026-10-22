@@ -1,5 +1,12 @@
 import { describe, expect, it } from 'vitest'
-import { PlayerboardVeoAnalysisWriteSchema, PlayerboardVeoMatchAnalysisSchema, PlayerboardVeoMatchTracksSchema } from './playerboardVeoAnalysis.js'
+import {
+  PlayerboardVeoAnalysisWriteSchema,
+  PlayerboardVeoMatchAnalysisSchema,
+  PlayerboardVeoMatchTracksSchema,
+  PlayerboardVeoSeasonMatchSchema,
+  PlayerboardVeoSeasonQuerySchema,
+  PlayerboardVeoTeamViewsSchema,
+} from './playerboardVeoAnalysis.js'
 
 const bytes = (...values: number[]) => btoa(String.fromCharCode(...values))
 
@@ -86,5 +93,37 @@ describe('PlayerboardVeoMatchAnalysisSchema', () => {
     const tracks = { sampleHz: 1, periods: valid.periods, tracks: valid.tracks }
     expect(PlayerboardVeoMatchTracksSchema.parse(tracks).tracks).toHaveLength(1)
     expect(PlayerboardVeoMatchTracksSchema.safeParse({ ...tracks, sampleHz: 2.5 }).success).toBe(false)
+  })
+})
+
+describe('Veo Analytics season contracts', () => {
+  it('reads comma separated filters from the query and rejects unknown kinds', () => {
+    expect(PlayerboardVeoSeasonQuerySchema.parse({ kinds: 'match,cup', last: '10' })).toEqual({ kinds: ['match', 'cup'], last: 10 })
+    expect(PlayerboardVeoSeasonQuerySchema.parse({ fixtureIds: '57000000-1000-4000-8000-000000000001' }).fixtureIds).toHaveLength(1)
+    expect(PlayerboardVeoSeasonQuerySchema.safeParse({ kinds: 'training' }).success).toBe(false)
+    expect(PlayerboardVeoSeasonQuerySchema.safeParse({ last: '0' }).success).toBe(false)
+    expect(PlayerboardVeoSeasonQuerySchema.safeParse({ team: 'x' }).success).toBe(false)
+  })
+
+  it('accepts a season match with its shots and nothing but shots and goals', () => {
+    const match = {
+      fixtureId: '57000000-1000-4000-8000-000000000001', kickoffAt: '2026-09-05T10:00:00+00:00', kind: 'match', opponentName: 'Gegner', isHome: true,
+      ownScore: 2, opponentScore: 1, veoUrl: null, analysisStatus: 'complete', analyticsVersion: '2', periods: valid.periods, availability: {},
+      teamStats: [], passPossession: null,
+      shots: [{ id: 's1', teamAssociation: 'own', eventType: 'FootballShot', jerseyNumber: 7, playerId: null, periodNumber: 1, periodTimeMs: 0, videoTimeMs: 0, x: 0.9, y: 0.5, assistJerseyNumber: null }],
+    }
+    expect(PlayerboardVeoSeasonMatchSchema.parse(match).shots).toHaveLength(1)
+    expect(PlayerboardVeoSeasonMatchSchema.safeParse({ ...match, shots: [{ ...match.shots[0], eventType: 'pass' }] }).success).toBe(false)
+  })
+
+  it('allows up to four unique key metrics and a radar with exactly six', () => {
+    const radar = { metrics: ['goals_scored', 'shots_on_goal', 'shots_to_goal_conversion_rate', 'win_ratio', 'passes_completed', 'possession_percent'], comparingTeamId: null, ownRange: ['2026-09-01', '2026-09-30'], comparingRange: ['2026-08-01', '2026-08-31'] }
+    expect(PlayerboardVeoTeamViewsSchema.parse({ keyMetrics: [], radar: null }).keyMetrics).toEqual([])
+    expect(PlayerboardVeoTeamViewsSchema.parse({ keyMetrics: ['goals_scored'], radar }).radar?.metrics).toHaveLength(6)
+    expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: ['goals_scored', 'goals_conceded', 'foul', 'saves', 'duels'], radar: null }).success).toBe(false)
+    expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: ['goals_scored', 'goals_scored'], radar: null }).success).toBe(false)
+    expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: [], radar: { ...radar, metrics: radar.metrics.slice(0, 5) } }).success).toBe(false)
+    expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: [], radar: { ...radar, ownRange: ['2026-09-30', '2026-09-01'] } }).success).toBe(false)
+    expect(PlayerboardVeoTeamViewsSchema.safeParse({ keyMetrics: ['expected_goals'], radar: null }).success).toBe(false)
   })
 })
