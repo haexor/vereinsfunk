@@ -10,6 +10,7 @@ import {
   PlayerboardVeoLoginResponseSchema,
   PlayerboardVeoStatusSchema,
   PlayerboardVeoSyncAcceptedSchema,
+  PlayerboardVeoSyncProgressSchema,
   PlayerboardVeoSyncRequestSchema,
   ResolvePlayerboardVeoConflictRequestSchema,
   UuidSchema,
@@ -45,6 +46,7 @@ type LinkRow = {
 type RunRow = {
   id: string; status: string; started_at: string; finished_at: string | null
   created_count: number; updated_count: number; skipped_count: number; conflict_count: number; error_class: string | null
+  progress: unknown
 }
 
 /** Uebersetzt einen Fehler aus dem Veo-Client in eine fachliche Antwort; andere Fehler gehen weiter. */
@@ -84,7 +86,7 @@ async function loadStatus(service: SupabaseClient, teamId: string) {
   if (link) {
     const loaded = await service
       .from('integration_sync_runs')
-      .select('id, status, started_at, finished_at, created_count, updated_count, skipped_count, conflict_count, error_class')
+      .select('id, status, started_at, finished_at, created_count, updated_count, skipped_count, conflict_count, error_class, progress')
       .eq('source_id', link.integration_source_id)
       .order('started_at', { ascending: false })
       .limit(10)
@@ -103,6 +105,8 @@ async function loadStatus(service: SupabaseClient, teamId: string) {
       id: run.id, status: run.status, startedAt: run.started_at, finishedAt: run.finished_at,
       createdCount: run.created_count, updatedCount: run.updated_count, skippedCount: run.skipped_count,
       conflictCount: run.conflict_count, errorClass: run.error_class,
+      // Nur eine Anzeige: ein unlesbarer Stand faellt weg, statt den ganzen Status scheitern zu lassen.
+      progress: PlayerboardVeoSyncProgressSchema.safeParse(run.progress).data ?? null,
     })),
   })
 }

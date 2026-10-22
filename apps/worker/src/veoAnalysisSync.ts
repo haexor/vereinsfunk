@@ -43,6 +43,8 @@ export interface VeoAnalysisDeps {
   retry: <T>(attempt: () => Promise<T>) => Promise<T>
   // Pause zwischen den Fensterabrufen der Positionsdaten (Betreiberentscheidung 2026-10-21: Veo nicht belasten).
   pause: () => Promise<void>
+  // Spec 002: Fortschritt der Positionsdaten (geladene und alle 30-s-Fenster) fuer die Anzeige.
+  onTracks?: (done: number, total: number) => Promise<void>
   http: VeoHttpOptions
 }
 
@@ -250,10 +252,15 @@ async function fetchNetworks(accessToken: string, veoMatchId: string, periods: r
 /** Positionsdaten aller Halbzeiten in 30-s-Fenstern mit Pause, verdichtet auf 1 Hz je Spur. */
 async function fetchTracks(accessToken: string, veoMatchId: string, periods: readonly VeoPeriod[], deps: VeoAnalysisDeps): Promise<NonNullable<PlayerboardVeoAnalysisWrite['tracks']>> {
   const samples: TrackSample[] = []
+  const total = periods.reduce((sum, period) => sum + Math.max(0, Math.ceil((period.endS - period.startS) / TRACKING_WINDOW_S)), 0)
+  let done = 0
+  await deps.onTracks?.(done, total)
   for (const period of periods) {
     for (let start = period.startS; start < period.endS; start += TRACKING_WINDOW_S) {
       const window = await deps.retry(() => fetchTrackingWindow(accessToken, veoMatchId, start, deps.http))
       samples.push(...window.filter((sample) => sample.t >= period.startS && sample.t <= period.endS))
+      done += 1
+      await deps.onTracks?.(done, total)
       await deps.pause()
     }
   }

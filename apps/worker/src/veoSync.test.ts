@@ -1,6 +1,7 @@
 import { createSecretBox } from '@vereinsfunk/secrets'
 import type { VeoMatch } from '@vereinsfunk/veo-client'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { PlayerboardVeoSyncProgress } from '@vereinsfunk/contracts'
 import { failureMailText, needsAnalysis, VeoSyncExecutor, type VeoAnalysisCandidate, type VeoMatchWrite, type VeoSyncFinish, type VeoSyncRepository } from './veoSync.js'
 
 const veo = vi.hoisted(() => ({
@@ -41,6 +42,7 @@ function fakeRepository(options: { runStatus?: string; notify?: boolean; refresh
   const finished: VeoSyncFinish[] = []
   const analyses: string[] = []
   const cleared: string[] = []
+  const progress: PlayerboardVeoSyncProgress[] = []
   const repository: VeoSyncRepository = {
     loadRun: async () => ({ sourceId: SOURCE_ID, status: options.runStatus ?? 'running' }),
     loadSource: async () => ({
@@ -53,15 +55,16 @@ function fakeRepository(options: { runStatus?: string; notify?: boolean; refresh
     analysisCandidates: async () => new Map(Object.entries(options.candidates ?? {})),
     applyAnalysis: async (_runId, veoMatchId) => { analyses.push(veoMatchId); return options.analysisResult ?? 'written' },
     clearAnalysisRefresh: async (_teamId, requestedAt) => { cleared.push(requestedAt) },
+    reportProgress: async (_runId, entry) => { progress.push(entry) },
   }
-  return { repository, applied, finished, analyses, cleared }
+  return { repository, applied, finished, analyses, cleared, progress }
 }
 
 const NOW = new Date('2026-10-21T12:00:00.000Z')
 const complete = (kickoffAt: string, hasTracks = true, fetchedAt = kickoffAt): VeoAnalysisCandidate => ({ analysisStatus: 'complete', kickoffAt, fetchedAt, hasTracks })
 
 /** Executor mit Fake-Mailversand und mitgeschriebenem Log. */
-function executor(repository: VeoSyncRepository, options: { analysisBudgetMs?: number } = {}) {
+function executor(repository: VeoSyncRepository, options: { analysisBudgetMs?: number; progressIntervalMs?: number } = {}) {
   const mails: { to: string; subject: string; text: string }[] = []
   const logs: unknown[] = []
   const instance = new VeoSyncExecutor({
@@ -145,6 +148,51 @@ describe('VeoSyncExecutor', () => {
     expect(finished[0]).toMatchObject({ status: 'succeeded' })
     expect(cleared).toEqual([])
     expect(logs).toContainEqual({ fields: { runId: RUN_ID, deferred: 2 }, message: 'veo analysis deferred to the next run' })
+  })
+
+  it('reports the progress per match, per step and per window of the tracks', async () => {
+    veo.listMatches.mockResolvedValue([match('a', { opponentName: 'SV Nord' }), match('b', { hasAnalytics: false, score: null }), match('c', { opponentName: 'FC Süd' })])
+    analysisSync.buildVeoAnalysis.mockImplementation(async (_request, deps: { onTracks: (done: number, total: number) => Promise<void> }) => {
+      await deps.onTracks(0, 2)
+      await deps.onTracks(1, 2)
+      return { status: 'complete', events: [], heatmaps: [], tracks: [] }
+    })
+    const { repository, progress } = fakeRepository({ candidates: { c: complete('2026-09-01T10:00:00.000Z') } })
+    await executor(repository, { progressIntervalMs: 0 }).instance.execute(payload)
+    const base = { matchesTotal: 2, analysesDeferred: 0, updatedAt: NOW.toISOString() }
+    expect(progress).toEqual([
+      { ...base, matchesDone: 0, analysesDone: 0, current: null },
+      { ...base, matchesDone: 0, analysesDone: 0, current: { opponentName: 'SV Nord', step: 'values' } },
+      { ...base, matchesDone: 0, analysesDone: 0, current: { opponentName: 'SV Nord', step: 'analysis' } },
+      { ...base, matchesDone: 0, analysesDone: 0, current: { opponentName: 'SV Nord', step: 'tracks', tracksDone: 0, tracksTotal: 2 } },
+      { ...base, matchesDone: 0, analysesDone: 0, current: { opponentName: 'SV Nord', step: 'tracks', tracksDone: 1, tracksTotal: 2 } },
+      { ...base, matchesDone: 1, analysesDone: 1, current: null },
+      { ...base, matchesDone: 1, analysesDone: 1, current: { opponentName: 'FC Süd', step: 'values' } },
+      { ...base, matchesDone: 2, analysesDone: 1, current: null },
+    ])
+  })
+
+  it('throttles progress within a match but writes every change of match, counts deferred analyses and survives a failed write', async () => {
+    veo.listMatches.mockResolvedValue([match('a'), match('b')])
+    const { repository, progress } = fakeRepository()
+    const writes: PlayerboardVeoSyncProgress[] = []
+    repository.reportProgress = async (_runId, entry) => {
+      writes.push(entry)
+      if (writes.length === 1) throw new Error('database down')
+      progress.push(entry)
+    }
+    const { instance, logs } = executor(repository, { analysisBudgetMs: 0 })
+    await instance.execute(payload)
+    expect(progress.map((entry) => [entry.matchesDone, entry.analysesDeferred, entry.current?.step ?? null])).toEqual([[1, 1, null], [2, 2, null]])
+    expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorName: 'Error' }, message: 'veo sync progress not written' })
+  })
+
+  it('clears the match in progress when Veo ends the run', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    veo.fetchTeamStats.mockRejectedValue(new VeoError('auth_expired', 'session expired', 401))
+    const { repository, progress } = fakeRepository()
+    await executor(repository).instance.execute(payload)
+    expect(progress.at(-1)).toMatchObject({ matchesDone: 0, current: null })
   })
 
   it('keeps the match values when its analysis fails, fails the run and keeps a refresh request', async () => {

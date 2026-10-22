@@ -1,4 +1,4 @@
-import type { PlayerboardVeoAnalysisWrite, WorkflowPayload } from '@vereinsfunk/contracts'
+import type { PlayerboardVeoAnalysisWrite, PlayerboardVeoSyncProgress, WorkflowPayload } from '@vereinsfunk/contracts'
 import type { EmailSender } from '@vereinsfunk/mailer'
 import type { SecretBox } from '@vereinsfunk/secrets'
 import {
@@ -78,6 +78,8 @@ export interface VeoSyncRepository {
   applyAnalysis(runId: string, veoMatchId: string, analysis: PlayerboardVeoAnalysisWrite): Promise<'written' | 'unknown_match'>
   /** Leert die Anforderung "Analyse neu laden", sofern sie seit `requestedAt` nicht erneut gesetzt wurde. */
   clearAnalysisRefresh(teamId: string, requestedAt: string): Promise<void>
+  /** Spec 002: Zwischenstand fuer die Anzeige; nur solange der Lauf noch laeuft. */
+  reportProgress(runId: string, progress: PlayerboardVeoSyncProgress): Promise<void>
 }
 
 export interface VeoSyncOptions {
@@ -93,6 +95,8 @@ export interface VeoSyncOptions {
   trackingPauseMs?: number
   // Zeitbudget je Lauf fuer Analysepakete, siehe ANALYSIS_BUDGET_MS.
   analysisBudgetMs?: number
+  // Mindestabstand zwischen zwei Fortschrittsmeldungen, siehe PROGRESS_INTERVAL_MS; Tests setzen 0.
+  progressIntervalMs?: number
   now?: () => Date
 }
 
@@ -101,6 +105,10 @@ export interface VeoSyncOptions {
 // der Rest folgt im naechsten Lauf, die neuesten Spiele zuerst (listMatches ist nach -created
 // sortiert). Ausbau: ein eigener Workflow je Spiel, wenn Mannschaften mit langer Historie dazukommen.
 const ANALYSIS_BUDGET_MS = 5 * 60_000
+
+// Die Seite fragt alle drei Sekunden nach; oefter zu schreiben zeigt niemand an. Wechsel zwischen
+// Spielen und Schritten werden sofort geschrieben, die Fenster der Positionsdaten gedrosselt.
+const PROGRESS_INTERVAL_MS = 3_000
 
 // ponytail: Veo hat kein Aenderungsmerkmal (Testabruf 2026-10-21); Korrekturen in Veo kommen nur
 // innerhalb dieses Fensters nach dem Anstoss automatisch an, aeltere ueber "Analyse neu laden".
@@ -158,6 +166,11 @@ export function toMatchWrite(match: VeoMatch, teamStats: readonly VeoTeamStat[],
   }
 }
 
+interface ProgressReporter {
+  state: Omit<PlayerboardVeoSyncProgress, 'updatedAt'>
+  report(force?: boolean): Promise<void>
+}
+
 export class VeoSyncExecutor {
   constructor(private readonly options: VeoSyncOptions) {}
 
@@ -186,17 +199,22 @@ export class VeoSyncExecutor {
     let analysisFailed = false
     let analysisDeferred = 0
     const startedAt = (this.options.now ?? (() => new Date()))().getTime()
+    const progress = this.progressReporter(runId)
     try {
       const { accessToken } = await exchangeSessionCookieForToken(cookie, http)
       const matches = await listMatches(accessToken, { veoClubSlug: source.veoClubSlug, veoTeamSlug: source.veoTeamSlug }, http)
       const candidates = await repository.analysisCandidates(source.teamId)
       const now = (this.options.now ?? (() => new Date()))()
+      progress.state.matchesTotal = matches.filter((match) => match.hasAnalytics && match.score).length
+      await progress.report(true)
       for (const match of matches) {
         // Ohne fertige Analyse und Endstand gibt es nichts zu zeigen (playerboard 003 FR-007).
         if (!match.hasAnalytics || !match.score) {
           outcome.skipped += 1
           continue
         }
+        progress.state.current = { opponentName: match.opponentName.slice(0, 200), step: 'values' }
+        await progress.report()
         try {
           const { teamStats, players } = await this.withRetry(runId, async () => ({
             teamStats: await fetchTeamStats(accessToken, { veoTeamId: match.veoTeamId, veoMatchIds: [match.veoMatchId] }, http),
@@ -210,8 +228,15 @@ export class VeoSyncExecutor {
           const candidate = candidates.get(match.veoMatchId)
           if ((result === 'created' || result === 'updated') && needsAnalysis(candidate, match.start, now, source.analysisRefreshRequestedAt)) {
             const elapsed = (this.options.now ?? (() => new Date()))().getTime() - startedAt
-            if (elapsed >= (this.options.analysisBudgetMs ?? ANALYSIS_BUDGET_MS)) analysisDeferred += 1
-            else if (!(await this.writeAnalysis(runId, accessToken, match, players, candidate, outcome))) analysisFailed = true
+            if (elapsed >= (this.options.analysisBudgetMs ?? ANALYSIS_BUDGET_MS)) {
+              analysisDeferred += 1
+              progress.state.analysesDeferred += 1
+            } else {
+              progress.state.current = { opponentName: progress.state.current!.opponentName, step: 'analysis' }
+              await progress.report(true)
+              if (await this.writeAnalysis(runId, accessToken, match, players, candidate, outcome, progress)) progress.state.analysesDone += 1
+              else analysisFailed = true
+            }
           }
         } catch (error) {
           if (error instanceof VeoError && RUN_ABORTING_CODES.has(error.code)) throw error
@@ -220,11 +245,19 @@ export class VeoSyncExecutor {
           outcome.errorClass ??= error instanceof VeoError ? error.code : 'apply_failed'
           this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo match skipped')
         }
+        progress.state.matchesDone += 1
+        progress.state.current = null
+        await progress.report(true)
       }
     } catch (error) {
       outcome.status = 'failed'
       outcome.errorClass = error instanceof VeoError ? error.code : 'internal_error'
       this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync failed')
+    }
+    if (progress.state.current) {
+      // Ein abgebrochener Lauf hat kein Spiel mehr in Arbeit; der Rest des Stands bleibt fuer die Liste.
+      progress.state.current = null
+      await progress.report(true)
     }
     if (analysisDeferred > 0) this.options.log({ runId, deferred: analysisDeferred }, 'veo analysis deferred to the next run')
     // "Analyse neu laden" gilt erst als erledigt, wenn jedes Paket geschrieben und keins verschoben wurde.
@@ -241,6 +274,7 @@ export class VeoSyncExecutor {
    */
   private async writeAnalysis(
     runId: string, accessToken: string, match: VeoMatch, players: VeoPlayerStats[], candidate: VeoAnalysisCandidate | undefined, outcome: VeoSyncFinish,
+    progress: ProgressReporter,
   ): Promise<boolean> {
     try {
       const analysis = await buildVeoAnalysis(
@@ -248,6 +282,10 @@ export class VeoSyncExecutor {
         {
           retry: (attempt) => this.withRetry(runId, attempt),
           pause: () => new Promise((resolve) => setTimeout(resolve, this.options.trackingPauseMs ?? 500)),
+          onTracks: async (tracksDone, tracksTotal) => {
+            progress.state.current = { opponentName: progress.state.current?.opponentName ?? match.opponentName.slice(0, 200), step: 'tracks', tracksDone, tracksTotal }
+            await progress.report(tracksDone === 0)
+          },
           http: { fetch: this.options.fetch },
         },
       )
@@ -267,6 +305,26 @@ export class VeoSyncExecutor {
       this.options.log({ runId, errorClass: error instanceof VeoError ? error.code : 'analysis_failed', status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo analysis skipped')
       return false
     }
+  }
+
+  /**
+   * Spec 002: Zwischenstand des Laufs fuer die Anzeige. Ohne `force` hoechstens alle
+   * PROGRESS_INTERVAL_MS geschrieben; ein Schreibfehler wird nur geloggt, der Lauf geht weiter.
+   */
+  private progressReporter(runId: string): ProgressReporter {
+    const state: ProgressReporter['state'] = { matchesTotal: 0, matchesDone: 0, analysesDone: 0, analysesDeferred: 0, current: null }
+    let lastWrite = Number.NEGATIVE_INFINITY
+    const report = async (force = false) => {
+      const now = (this.options.now ?? (() => new Date()))()
+      if (!force && now.getTime() - lastWrite < (this.options.progressIntervalMs ?? PROGRESS_INTERVAL_MS)) return
+      lastWrite = now.getTime()
+      try {
+        await this.options.repository.reportProgress(runId, { ...state, current: state.current && { ...state.current }, updatedAt: now.toISOString() })
+      } catch (error) {
+        this.options.log({ runId, errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync progress not written')
+      }
+    }
+    return { state, report }
   }
 
   /**

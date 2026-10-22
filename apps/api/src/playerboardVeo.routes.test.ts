@@ -276,6 +276,31 @@ describe('GET /v1/playerboard/veo/status', () => {
     expect(response.statusCode).toBe(200)
     expect(response.json()).toMatchObject({ linked: true, veoTeamName: 'TSV U13', needsReconnect: true, consecutiveFailures: 3, runs: [] })
   })
+
+  it('returns the progress of a running sync and drops an unreadable one', async () => {
+    const progress = {
+      matchesTotal: 8, matchesDone: 3, analysesDone: 2, analysesDeferred: 0,
+      current: { opponentName: 'SV Nord', step: 'tracks', tracksDone: 40, tracksTotal: 190 }, updatedAt: '2026-10-22T19:48:00Z',
+    }
+    const run = {
+      started_at: '2026-10-22T19:46:00Z', finished_at: null, created_count: 0, updated_count: 3, skipped_count: 0, conflict_count: 0, error_class: null,
+    }
+    const app = await startApp({
+      roleProvider: rolesProvider(['player']),
+      supabaseClients: clients({
+        link: { team_id: TEAM_ID, organization_id: ORGANIZATION_ID, integration_source_id: SOURCE_ID, veo_club_name: 'TSV', veo_team_name: 'TSV U13', consecutive_failures: 0, last_error_code: null },
+        tables: {
+          integration_sync_runs: [
+            { ...run, id: '53000000-4000-4000-8000-000000000001', status: 'running', progress },
+            { ...run, id: '53000000-4000-4000-8000-000000000002', status: 'succeeded', progress: { matchesTotal: 'acht' } },
+          ],
+        },
+      }),
+    })
+    const response = await call(app, 'GET', `/v1/playerboard/veo/status?teamId=${TEAM_ID}`)
+    expect(response.statusCode).toBe(200)
+    expect(response.json().runs.map((entry: { progress: unknown }) => entry.progress)).toEqual([progress, null])
+  })
 })
 
 describe('GET /v1/playerboard/teams/:teamId/veo/matches', () => {
