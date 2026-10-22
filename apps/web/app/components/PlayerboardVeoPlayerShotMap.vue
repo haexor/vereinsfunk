@@ -1,17 +1,10 @@
 <script setup lang="ts">
 import { percentLabel } from '../utils/playerboardVeoAnalysis'
+import type { PlayerShotMarker } from '../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 3: Schusskarte eines Spielers im Halbfeld wie Veos Spielerkarte (Inventar §2.3
 // "Maps"): Tore gefuellt, Schuesse ohne Tor als Ring; darunter Tore, Schuesse, Abschluesse und
 // Torquote. Ein Klick oeffnet die Stelle im Veo-Video. Abschluesse ohne Ort zaehlen mit.
-export interface PlayerShotMarker {
-  key: string
-  goal: boolean
-  x: number | null
-  y: number | null
-  href: string | null
-  title: string
-}
 const props = withDefaults(defineProps<{ shots: readonly PlayerShotMarker[]; label: string; withSummary?: boolean }>(), { withSummary: true })
 
 const goals = computed(() => props.shots.filter((shot) => shot.goal).length)

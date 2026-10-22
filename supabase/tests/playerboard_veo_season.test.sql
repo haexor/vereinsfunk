@@ -149,12 +149,12 @@ select throws_ok(
 );
 select throws_ok(
   $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
-      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000003"}'::jsonb)$$,
+      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000003", "ownRange": ["2026-09-01", "2026-09-30"], "comparingRange": ["2026-10-01", "2026-10-31"]}'::jsonb)$$,
   '22023', 'comparing_team_not_available', 'a team of another club cannot be the comparison'
 );
 select throws_ok(
   $$select public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array['goals_scored'],
-      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000002"}'::jsonb)$$,
+      '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000002", "ownRange": ["2026-09-01", "2026-09-30"], "comparingRange": ["2026-10-01", "2026-10-31"]}'::jsonb)$$,
   '22023', 'comparing_team_not_available', 'a team whose stats the coach cannot see cannot be the comparison'
 );
 select is(
@@ -182,7 +182,7 @@ insert into public.playerboard_settings (organization_id, scope, department_id, 
 set local role authenticated;
 select is(
   public.playerboard_veo_save_team_views('00220000-1200-4000-8000-000000000001', array[]::text[],
-    '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000002"}'::jsonb)->'radar'->>'comparingTeamId',
+    '{"metrics": ["goals_scored", "shots_on_goal", "shots_to_goal_conversion_rate", "win_ratio", "passes_completed", "possession_percent"], "comparingTeamId": "00220000-1200-4000-8000-000000000002", "ownRange": ["2026-09-01", "2026-09-30"], "comparingRange": ["2026-10-01", "2026-10-31"]}'::jsonb)->'radar'->>'comparingTeamId',
   '00220000-1200-4000-8000-000000000002',
   'a team of the same department becomes the comparison once its stats are visible'
 );

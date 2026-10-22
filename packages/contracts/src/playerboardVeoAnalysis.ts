@@ -270,6 +270,42 @@ export const PlayerboardVeoSeasonMatchSchema = z.object({
   })),
 })
 
+// --- Veo Analytics: Spieler ueber die Saison (Inventar §2.1) -----------------------------------------
+
+// Je Spiel die Werte jeder Rueckennummer als {statType: value}; Ranglisten, Saisontabelle und
+// Vergleich rechnet packages/domain (veoPlayers.ts).
+export const PlayerboardVeoPlayerSeasonMatchSchema = z.object({
+  fixtureId: UuidSchema,
+  kickoffAt: z.string(),
+  opponentName: z.string().nullable(),
+  ownScore: z.int().nullable(),
+  opponentScore: z.int().nullable(),
+  analyticsVersion: PlayerboardVeoAnalyticsVersionSchema.nullable(),
+  players: z.array(z.object({
+    jerseyNumber: VeoJerseySchema,
+    playerId: UuidSchema.nullable(),
+    personId: UuidSchema.nullable(),
+    name: z.string().nullable(),
+    stats: z.record(z.string().min(1), z.number()),
+  })),
+})
+
+// Heatmaps eines Spielers (playerId) oder einer nicht zugeordneten Rueckennummer (jerseyNumber),
+// mit denselben Filtern wie die Saison.
+export const PlayerboardVeoPlayerHeatmapsQuerySchema = PlayerboardVeoSeasonQuerySchema.extend({
+  playerId: UuidSchema.optional(),
+  jerseyNumber: z.coerce.number().int().min(0).max(9999).optional(),
+}).strict().refine((query) => (query.playerId === undefined) !== (query.jerseyNumber === undefined), 'either playerId or jerseyNumber is required')
+
+export const PlayerboardVeoPlayerHeatmapSchema = z.object({
+  fixtureId: UuidSchema,
+  jerseyNumber: VeoJerseySchema,
+  width: z.int().min(1).max(200),
+  height: z.int().min(1).max(200),
+  cells: z.string(),
+  secondsPlayed: z.int().nonnegative().nullable(),
+})
+
 const unique = (values: readonly string[]) => new Set(values).size === values.length
 const DateRangeSchema = z.tuple([z.iso.date(), z.iso.date()]).refine(([from, to]) => from <= to, 'range must not end before it starts')
 
@@ -298,6 +334,9 @@ export type PlayerboardVeoMatchAnalysis = z.infer<typeof PlayerboardVeoMatchAnal
 export type PlayerboardVeoMatchEvent = PlayerboardVeoMatchAnalysis['events'][number]
 export type PlayerboardVeoMatchTracks = z.infer<typeof PlayerboardVeoMatchTracksSchema>
 export type PlayerboardVeoKeyMetricId = z.infer<typeof PlayerboardVeoKeyMetricIdSchema>
+export type PlayerboardVeoPlayerSeasonMatch = z.infer<typeof PlayerboardVeoPlayerSeasonMatchSchema>
+export type PlayerboardVeoPlayerHeatmapsQuery = z.infer<typeof PlayerboardVeoPlayerHeatmapsQuerySchema>
+export type PlayerboardVeoPlayerHeatmap = z.infer<typeof PlayerboardVeoPlayerHeatmapSchema>
 export type PlayerboardVeoSeasonQuery = z.infer<typeof PlayerboardVeoSeasonQuerySchema>
 export type PlayerboardVeoSeasonMatch = z.infer<typeof PlayerboardVeoSeasonMatchSchema>
 export type PlayerboardVeoTeamViews = z.infer<typeof PlayerboardVeoTeamViewsSchema>

@@ -322,20 +322,20 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 **Independent Test**: [quickstart.md](quickstart.md) §2, Schritt 5 (Spieler), und das Profil einer Spielerin.
 
-- [ ] T063 [P] [US4] pgTAP-Fälle in `supabase/tests/playerboard_veo_season.test.sql`:
+- [X] T063 [P] [US4] pgTAP-Fälle in `supabase/tests/playerboard_veo_player_season.test.sql` (eigene Datei; `person_profile` folgt mit T071):
   - `playerboard_veo_player_heatmaps`: Spieler mit wechselnden Rückennummern über Spiele; Isolation; Spieler einer anderen Mannschaft ergibt Fehler.
   - `person_profile` liefert `veo` nur für Mannschaften mit Verbindung und Sicht.
-- [ ] T064 [US4] Migration `supabase/migrations/<zeitstempel>_playerboard_veo_player_season.sql`: `playerboard_veo_player_heatmaps(…)` nach [data-model.md](data-model.md); `person_profile` um `veo` je Mannschaft erweitern (Spec 001, `supabase/migrations/2026101701_person_profile.sql` als Ausgang).
-- [ ] T065 [P] [US4] Test in `packages/domain/src/veoMetrics.test.ts`, Teil Spieler-Saison, vor T066:
+- [X] T064 [US4] Migration `supabase/migrations/2026102202_playerboard_veo_player_season.sql` (dazu `playerboard_veo_player_season` und der gemeinsame Filter `authz.playerboard_veo_season_fixture_ids`; `person_profile` folgt mit T071): `playerboard_veo_player_heatmaps(…)` nach [data-model.md](data-model.md); `person_profile` um `veo` je Mannschaft erweitern (Spec 001, `supabase/migrations/2026101701_person_profile.sql` als Ausgang).
+- [X] T065 [P] [US4] Test in `packages/domain/src/veoPlayers.test.ts`, Teil Spieler-Saison, vor T066:
   - Ranglisten: Top 5, Gleichstand nach Name, Gegner nie enthalten, Umrechnung der Quote ×100 und Sekunden in Minuten (Inv. §4.2.4)
   - Saisonsummen und -durchschnitte je Spieler über wechselnde Rückennummern
   - Vergleich mit gruppierten Werten und Hervorhebung des höheren Werts (Inv. §2.1.5)
   - Spiele, Startelf, Kapitän, „Spieler des Spiels“, soweit vorhanden
-- [ ] T066 [US4] `packages/domain/src/veoMetrics.ts`, Teil Spieler-Saison.
-- [ ] T067 [US4] API `GET …/veo/season/players/:playerId/heatmaps` in `veoAnalysis.ts` mit Tests. `apps/api/src/routes/playerboard/personProfile.ts` und `packages/contracts/src/personProfile.ts` liefern `veo: { teamId, playerId } | null`, mit Tests.
-- [ ] T068 [P] [US4] `apps/web/app/components/PlayerboardVeoLeaderboards.vue`: Karten je Kennzahl, bis 3 wählbar (`localStorage` `vereinsfunk.veo.leaderboard-metrics`), Standards nach Inv. §2.1.1, Name führt zur Spielerkarte.
-- [ ] T069 [P] [US4] `apps/web/app/components/PlayerboardVeoPlayerComparison.vue`: zwei Spieler wählbar (`localStorage` je Mannschaft), Gruppen aus Inv. §2.1.5, Heatmaps und Schusskarten nebeneinander.
-- [ ] T070 [US4] Seite `apps/web/app/pages/playerboard/saison.vue`, Reiter Spieler:
+- [X] T066 [US4] `packages/domain/src/veoPlayers.ts`, Teil Spieler-Saison.
+- [X] T067 [US4] API `GET …/veo/season/players` und `GET …/veo/season/heatmaps?playerId=|jerseyNumber=` in `veoAnalysis.ts` mit Tests. (Offen mit T071:) `apps/api/src/routes/playerboard/personProfile.ts` und `packages/contracts/src/personProfile.ts` liefern `veo: { teamId, playerId } | null`, mit Tests.
+- [X] T068 [P] [US4] `apps/web/app/components/PlayerboardVeoLeaderboards.vue`: Karten je Kennzahl, bis 3 wählbar (`localStorage` `vereinsfunk.veo.leaderboard-metrics`), Standards nach Inv. §2.1.1, Name führt zur Spielerkarte.
+- [X] T069 [P] [US4] `apps/web/app/components/PlayerboardVeoPlayerComparison.vue`: zwei Spieler wählbar (`localStorage` je Mannschaft), Gruppen aus Inv. §2.1.5, Heatmaps und Schusskarten nebeneinander.
+- [X] T070 [US4] Seite `apps/web/app/pages/playerboard/analytics.vue` (Veo Analytics), Reiter Spieler mit `?ansicht=spieler`:
   - Ranglisten
   - Saisontabelle (`PlayerboardVeoPlayerTable` im Saisonmodus mit Standardspalten aus Inv. §2.1.2)
   - Spieler-Schusskarte mit Filter Abschlüsse, Schüsse, Tore und Spielerliste
@@ -343,7 +343,7 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Vergleich
   - Spielerkarte im Saisonmodus
 - [ ] T071 [US4] `apps/web/app/pages/personen/[id].vue`: Abschnitt „Spielanalyse“ je Mannschaft mit `veo` (Saisonwerte, Heatmap, Schusskarte), mit denselben Komponenten.
-- [ ] T072 [US4] Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 5 (Spieler), sowie §3 und §4. PR 5 öffnen.
+- [ ] T072 [US4] (lokal geprüft: C1 mit 8 Spielen bei 1280 und 360 px ohne seitliches Scrollen und ohne Konsolenfehler; offen sind T071 und der Vergleich mit Veo) Prüfung nach [quickstart.md](quickstart.md) §2, Schritt 5 (Spieler), sowie §3 und §4. PR 5 öffnen.
 
 **Checkpoint**: Stories 1–4 nutzbar.
 
