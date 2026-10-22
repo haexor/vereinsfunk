@@ -1,4 +1,6 @@
 import { z } from 'zod'
+import { PlayerboardVeoStatSchema } from './playerboard.js'
+import { UuidSchema } from './primitives.js'
 
 // --- Spec 002: Veo-Spielanalyse -----------------------------------------------------------------
 //
@@ -136,6 +138,74 @@ export const PlayerboardVeoAnalysisWriteSchema = z.object({
   tracks: z.array(PlayerboardVeoAnalysisTrackSchema).nullable(),
 }).strict()
 
+// --- Lesen: Spielauswertung (contracts/veo-analysis.md "analysis" und "tracks") -------------------
+
+const PeriodValuesSchema = z.array(z.object({ period: z.int().min(1), value: z.number() }).strict())
+const ReadStatSchema = PlayerboardVeoStatSchema.extend({ periodValues: PeriodValuesSchema })
+
+export const PlayerboardVeoMatchAnalysisSchema = z.object({
+  fixtureId: UuidSchema,
+  kickoffAt: z.string(),
+  opponentName: z.string().nullable(),
+  isHome: z.boolean().nullable(),
+  ownScore: z.int().nullable(),
+  opponentScore: z.int().nullable(),
+  // https://app.veo.co/matches/{slug}/ (R-11); null, solange der Abgleich den Slug nicht kennt.
+  veoUrl: z.url().nullable(),
+  analysisStatus: z.enum(['none', 'pending', 'complete', 'unavailable']),
+  analyticsVersion: PlayerboardVeoAnalyticsVersionSchema.nullable(),
+  periods: z.array(PlayerboardVeoPeriodSchema),
+  availability: PlayerboardVeoAvailabilitySchema,
+  teamStats: z.array(ReadStatSchema.extend({ teamAssociation: z.enum(['own', 'opponent']) })),
+  players: z.array(z.object({
+    jerseyNumber: VeoJerseySchema,
+    playerId: UuidSchema.nullable(),
+    personId: UuidSchema.nullable(),
+    name: z.string().nullable(),
+    matchedManually: z.boolean(),
+    stats: z.array(ReadStatSchema),
+  })),
+  // playerId nur bei eigenen Ereignissen, aus der aktuellen Zuordnung der Rueckennummer.
+  events: z.array(z.object({
+    id: z.string().min(1),
+    teamAssociation: z.enum(['own', 'opponent']),
+    eventType: z.string().min(1),
+    jerseyNumber: VeoJerseySchema.nullable(),
+    playerId: UuidSchema.nullable(),
+    periodNumber: z.int().min(1),
+    periodTimeMs: z.int().nonnegative(),
+    videoTimeMs: z.int().nonnegative(),
+    x: UnitSchema.nullable(),
+    y: UnitSchema.nullable(),
+    endX: UnitSchema.nullable(),
+    endY: UnitSchema.nullable(),
+    outcome: z.int().nullable(),
+    receiverJerseyNumber: VeoJerseySchema.nullable(),
+    assistJerseyNumber: VeoJerseySchema.nullable(),
+  })),
+  heatmaps: z.array(z.object({
+    jerseyNumber: VeoJerseySchema,
+    periodNumber: z.int().min(0),
+    width: z.int().min(1).max(200),
+    height: z.int().min(1).max(200),
+    cells: z.string(),
+    averageX: UnitSchema.nullable(),
+    averageY: UnitSchema.nullable(),
+  })),
+  passPossession: PlayerboardVeoPassPossessionSchema.nullable(),
+  momentum: z.array(z.tuple([z.number(), z.number().nullable()])).nullable(),
+  passingNetwork: PlayerboardVeoPassingNetworkSchema.nullable(),
+  hasReport: z.boolean(),
+  hasTracking: z.boolean(),
+})
+
+export const PlayerboardVeoMatchTracksSchema = z.object({
+  sampleHz: z.literal(1),
+  periods: z.array(PlayerboardVeoPeriodSchema),
+  // Kamera-Koordinaten je Spielfeldseite; packages/domain ordnet sie ueber ownSide zu.
+  tracks: z.array(PlayerboardVeoAnalysisTrackSchema),
+})
+
 export type PlayerboardVeoAnalysisPart = z.infer<typeof PlayerboardVeoAnalysisPartSchema>
 export type PlayerboardVeoAvailabilityReason = z.infer<typeof PlayerboardVeoAvailabilityReasonSchema>
 export type PlayerboardVeoAvailability = z.infer<typeof PlayerboardVeoAvailabilitySchema>
@@ -145,3 +215,7 @@ export type PlayerboardVeoAnalysisHeatmap = z.infer<typeof PlayerboardVeoAnalysi
 export type PlayerboardVeoAnalysisTrack = z.infer<typeof PlayerboardVeoAnalysisTrackSchema>
 export type PlayerboardVeoPassPossession = z.infer<typeof PlayerboardVeoPassPossessionSchema>
 export type PlayerboardVeoPassingNetwork = z.infer<typeof PlayerboardVeoPassingNetworkSchema>
+export type PlayerboardVeoPeriod = z.infer<typeof PlayerboardVeoPeriodSchema>
+export type PlayerboardVeoMatchAnalysis = z.infer<typeof PlayerboardVeoMatchAnalysisSchema>
+export type PlayerboardVeoMatchEvent = PlayerboardVeoMatchAnalysis['events'][number]
+export type PlayerboardVeoMatchTracks = z.infer<typeof PlayerboardVeoMatchTracksSchema>

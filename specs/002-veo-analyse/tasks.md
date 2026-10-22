@@ -169,13 +169,13 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ### Tests für User Story 1
 
-- [ ] T026 [P] [US1] pgTAP `supabase/tests/playerboard_veo_match_analysis.test.sql`:
+- [X] T026 [P] [US1] pgTAP `supabase/tests/playerboard_veo_match_analysis.test.sql`:
   - `playerboard_veo_match_analysis(team, fixture)` liefert für Mitspieler alle Teile.
   - Bei Nachbarmannschaft ohne Sicht, fremdem Verein, unbekanntem Spiel und Spiel einer anderen Mannschaft kommt `insufficient_permission`, bzw. dieselbe Antwort für „unbekannt“ und „nicht sichtbar“, wie in `playerboard_veo_team_matches` geregelt.
   - Gegnerereignisse haben kein `playerId`.
   - Eigene Ereignisse tragen das `playerId` der aktuellen Zuordnung.
   - `playerboard_veo_match_tracks` ist entsprechend geschützt.
-- [ ] T027 [P] [US1] Test `packages/domain/src/veoMetrics.test.ts`, Teil Spiel, vor T028:
+- [X] T027 [P] [US1] Test `packages/domain/src/veoMetrics.test.ts`, Teil Spiel, vor T028:
   - Gegenüberstellung inklusive `TotalAttempts` und `MissedShots` (Inv. §1a.2 `mt`/`gt`)
   - Ballbesitz % und Minuten mit „ohne Ballbesitz“ (Inv. §1a.3.1)
   - Treffer- und Abschlussquoten gesamt, innen und außen (Inv. §1a.7)
@@ -184,8 +184,8 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
   - Spielverlauf-Anteile je Seite und Vorzeichen-Normierung auf die Heimmannschaft (Inv. §1a.11)
 
   Erwartete Werte mit den Testdaten aus T004 und einem in Veo abgelesenen Referenzspiel.
-- [ ] T028 [US1] `packages/domain/src/veoMetrics.ts`, Teil Spiel, und Export. Teilen, sobald die Datei gegen 500 Zeilen geht.
-- [ ] T029 [P] [US1] Test `apps/api/src/playerboardVeoAnalysis.routes.test.ts`:
+- [X] T028 [US1] `packages/domain/src/veoMetrics.ts`, Teil Spiel, und Export. Teilen, sobald die Datei gegen 500 Zeilen geht.
+- [X] T029 [P] [US1] Test `apps/api/src/playerboardVeoAnalysis.routes.test.ts`:
   - `GET …/veo/matches/:fixtureId/analysis` und `…/tracks`: Erst kommt die Prüfung des Moduls, dann die der Sicht.
   - Gleicher `404`-Body für unbekannt und nicht sichtbar.
   - Antwort entspricht dem Schema.
@@ -193,12 +193,12 @@ Monorepo, das Arbeitsverzeichnis ist ein Worktree unter `.worktrees/`. Pfade sin
 
 ### Implementierung für User Story 1
 
-- [ ] T030 [US1] Migration `supabase/migrations/<zeitstempel>_playerboard_veo_match_analysis.sql`:
+- [X] T030 [US1] Migration `supabase/migrations/<zeitstempel>_playerboard_veo_match_analysis.sql`:
   - `public.playerboard_veo_match_analysis(target_team_id uuid, target_fixture_id uuid) returns jsonb` und `public.playerboard_veo_match_tracks(…)`
   - `security definer`, Prüfung `authz.can_view_playerboard_stats` vorab, `grant execute` an `authenticated, service_role`
   - Form exakt nach [contracts/veo-analysis.md](contracts/veo-analysis.md) „analysis“, mit `veoUrl` aus `veo_match_slug`
-- [ ] T031 [P] [US1] Schemas `PlayerboardVeoMatchAnalysisSchema` und `PlayerboardVeoMatchTracksSchema` in `packages/contracts/src/playerboardVeoAnalysis.ts`, mit Tests.
-- [ ] T032 [US1] `apps/api/src/routes/playerboard/veoAnalysis.ts` (neu) mit `GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/analysis` und `…/tracks`, registriert in `apps/api/src/routes/playerboard/index.ts`. Muster für Modulprüfung, Fehlerabbildung und Nutzer-Client ist `GET …/veo/matches` in `veo.ts`.
+- [X] T031 [P] [US1] Schemas `PlayerboardVeoMatchAnalysisSchema` und `PlayerboardVeoMatchTracksSchema` in `packages/contracts/src/playerboardVeoAnalysis.ts`, mit Tests.
+- [X] T032 [US1] `apps/api/src/routes/playerboard/veoAnalysis.ts` (neu) mit `GET /v1/playerboard/teams/:teamId/veo/matches/:fixtureId/analysis` und `…/tracks`, registriert in `apps/api/src/routes/playerboard/index.ts`. Muster für Modulprüfung, Fehlerabbildung und Nutzer-Client ist `GET …/veo/matches` in `veo.ts`.
 - [ ] T033 [P] [US1] `apps/web/app/components/PlayerboardPitch.vue`:
   - SVG-Spielfeld in den Varianten `full` (234 × 150), `half` und `landscape` (627 × 402)
   - Zonen-Overlays `thirds`, `3-lanes`, `5-lanes`, `9-zones`, `18-zones` (Maße aus Inv. §3.4)

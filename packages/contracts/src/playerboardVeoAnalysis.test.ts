@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { PlayerboardVeoAnalysisWriteSchema } from './playerboardVeoAnalysis.js'
+import { PlayerboardVeoAnalysisWriteSchema, PlayerboardVeoMatchAnalysisSchema, PlayerboardVeoMatchTracksSchema } from './playerboardVeoAnalysis.js'
 
 const bytes = (...values: number[]) => btoa(String.fromCharCode(...values))
 
@@ -53,5 +53,38 @@ describe('PlayerboardVeoAnalysisWriteSchema', () => {
 
   it('rejects extra fields so nothing unchecked reaches the database', () => {
     expect(PlayerboardVeoAnalysisWriteSchema.safeParse({ ...valid, players: [] }).success).toBe(false)
+  })
+})
+
+describe('PlayerboardVeoMatchAnalysisSchema', () => {
+  const analysis = {
+    fixtureId: '57000000-1000-4000-8000-000000000001', kickoffAt: '2026-09-23T14:54:40+00:00', opponentName: 'Gegner', isHome: true,
+    ownScore: 7, opponentScore: 5, veoUrl: 'https://app.veo.co/matches/c1-vs-gegner/', analysisStatus: 'complete', analyticsVersion: '2',
+    periods: valid.periods, availability: valid.availability,
+    teamStats: [{ teamAssociation: 'own', statType: 'football_goal_total', category: 'attacking', value: 7, periodValues: [{ period: 1, value: 3 }] }],
+    players: [{ jerseyNumber: 7, playerId: null, personId: null, name: null, matchedManually: false, stats: [] }],
+    events: valid.events.map(({ veoEventId, ...event }) => ({ ...event, id: veoEventId, playerId: null })),
+    heatmaps: valid.heatmaps.map((heatmap) => ({ jerseyNumber: heatmap.jerseyNumber, periodNumber: heatmap.periodNumber, width: heatmap.width, height: heatmap.height, cells: heatmap.cells, averageX: heatmap.averageX, averageY: heatmap.averageY })),
+    passPossession: valid.passPossession, momentum: valid.momentum, passingNetwork: valid.passingNetwork,
+    hasReport: true, hasTracking: false,
+  }
+
+  it('accepts what the read function returns, also before any analysis was fetched', () => {
+    expect(PlayerboardVeoMatchAnalysisSchema.parse(analysis).events).toHaveLength(2)
+    expect(PlayerboardVeoMatchAnalysisSchema.parse({
+      ...analysis, veoUrl: null, analysisStatus: 'none', analyticsVersion: null, periods: [], availability: {},
+      events: [], heatmaps: [], passPossession: null, momentum: null, passingNetwork: null, hasReport: false,
+    }).analyticsVersion).toBeNull()
+  })
+
+  it('rejects an event location outside the pitch', () => {
+    const [event] = analysis.events
+    expect(PlayerboardVeoMatchAnalysisSchema.safeParse({ ...analysis, events: [{ ...event, y: -0.1 }] }).success).toBe(false)
+  })
+
+  it('accepts tracks only as x/y pairs at one sample per second', () => {
+    const tracks = { sampleHz: 1, periods: valid.periods, tracks: valid.tracks }
+    expect(PlayerboardVeoMatchTracksSchema.parse(tracks).tracks).toHaveLength(1)
+    expect(PlayerboardVeoMatchTracksSchema.safeParse({ ...tracks, sampleHz: 2.5 }).success).toBe(false)
   })
 })
