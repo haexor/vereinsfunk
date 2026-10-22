@@ -44,15 +44,15 @@ async function load() {
 // Fragt den Status alle drei Sekunden ab, solange ein Lauf laeuft -- auch einen, der schon beim
 // Oeffnen der Seite lief. Ein Lauf mit Spielanalysen dauert bis zu zehn Minuten; gefragt wird bis
 // SYNC_POLL_LIMIT_MS nach seinem Start, danach gilt er als haengend und der naechste Anstoss gibt
-// ihn frei. pollUntil deckt den Moment ab, bevor ein neuer Lauf im Status erscheint. usePolling
-// haelt nach dem Verlassen der Seite an.
+// ihn frei. pollUntil haelt das Fragen kurz nach einem Anstoss auch ohne laufenden Lauf am Leben,
+// bis der neue Lauf im Status erscheint. usePolling haelt nach dem Verlassen der Seite an.
 let pollUntil = 0
 const { ensurePolling } = usePolling(async () => {
   await load()
   if (!running.value) notice.value = ''
-}, () => running.value && (Date.now() < pollUntil || Date.now() - Date.parse(latestRun.value!.startedAt) < SYNC_POLL_LIMIT_MS), 3_000)
+}, () => Date.now() < pollUntil || (running.value && Date.now() - Date.parse(latestRun.value!.startedAt) < SYNC_POLL_LIMIT_MS), 3_000)
 function watchRun() {
-  pollUntil = Date.now() + 180_000
+  pollUntil = Date.now() + 30_000
   ensurePolling()
 }
 

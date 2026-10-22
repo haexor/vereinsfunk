@@ -64,7 +64,7 @@ const NOW = new Date('2026-10-21T12:00:00.000Z')
 const complete = (kickoffAt: string, hasTracks = true, fetchedAt = kickoffAt): VeoAnalysisCandidate => ({ analysisStatus: 'complete', kickoffAt, fetchedAt, hasTracks })
 
 /** Executor mit Fake-Mailversand und mitgeschriebenem Log. */
-function executor(repository: VeoSyncRepository, options: { analysisBudgetMs?: number; progressIntervalMs?: number } = {}) {
+function executor(repository: VeoSyncRepository, options: { analysisBudgetMs?: number; progressIntervalMs?: number; now?: () => Date } = {}) {
   const mails: { to: string; subject: string; text: string }[] = []
   const logs: unknown[] = []
   const instance = new VeoSyncExecutor({
@@ -172,8 +172,25 @@ describe('VeoSyncExecutor', () => {
     ])
   })
 
-  it('throttles progress within a match but writes every change of match, counts deferred analyses and survives a failed write', async () => {
-    veo.listMatches.mockResolvedValue([match('a'), match('b')])
+  it('throttles the windows of the tracks but writes every change of match and step', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    analysisSync.buildVeoAnalysis.mockImplementation(async (_request, deps: { onTracks: (done: number, total: number) => Promise<void> }) => {
+      for (const done of [0, 1, 2]) await deps.onTracks(done, 2)
+      return { status: 'complete', events: [], heatmaps: [], tracks: [] }
+    })
+    const { repository, progress } = fakeRepository()
+    await executor(repository).instance.execute(payload)
+    expect(progress.map((entry) => [entry.current?.step ?? null, entry.current?.tracksDone ?? null])).toEqual([[null, null], ['values', null], ['analysis', null], ['tracks', 0], [null, null]])
+  })
+
+  it('counts deferred analyses, does not count a package Veo still processes and survives a failed write', async () => {
+    veo.listMatches.mockResolvedValue([match('a'), match('b'), match('c')])
+    // Das erste Paket verbraucht das ganze Zeitbudget; Veo rechnet an dem Spiel noch.
+    let clock = NOW
+    analysisSync.buildVeoAnalysis.mockImplementation(async () => {
+      clock = new Date(NOW.getTime() + 10 * 60_000)
+      return { status: 'pending', events: [], heatmaps: [], tracks: null }
+    })
     const { repository, progress } = fakeRepository()
     const writes: PlayerboardVeoSyncProgress[] = []
     repository.reportProgress = async (_runId, entry) => {
@@ -181,9 +198,9 @@ describe('VeoSyncExecutor', () => {
       if (writes.length === 1) throw new Error('database down')
       progress.push(entry)
     }
-    const { instance, logs } = executor(repository, { analysisBudgetMs: 0 })
+    const { instance, logs } = executor(repository, { now: () => clock })
     await instance.execute(payload)
-    expect(progress.map((entry) => [entry.matchesDone, entry.analysesDeferred, entry.current?.step ?? null])).toEqual([[1, 1, null], [2, 2, null]])
+    expect(progress.at(-1)).toMatchObject({ matchesDone: 3, analysesDone: 0, analysesDeferred: 2, current: null })
     expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorName: 'Error' }, message: 'veo sync progress not written' })
   })
 
