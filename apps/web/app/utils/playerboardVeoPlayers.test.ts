@@ -1,6 +1,19 @@
-import { DEFAULT_MATCH_PLAYER_COLUMNS } from '@vereinsfunk/domain'
+import { DEFAULT_LEADERBOARD_METRICS, DEFAULT_MATCH_PLAYER_COLUMNS, seasonPlayerRows } from '@vereinsfunk/domain'
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { formatPlayerMetric, matchPlayerRows, playerMetricHeader, playerRowName, playerRowSubtitle, readPlayerColumns, writePlayerColumns } from './playerboardVeoPlayers'
+import {
+  formatPlayerMetric,
+  matchPlayerRows,
+  playerMetricHeader,
+  playerRowName,
+  playerRowSubtitle,
+  readComparisonPlayers,
+  readLeaderboardMetrics,
+  readPlayerColumns,
+  seasonShotsByPlayer,
+  seasonTableRows,
+  writeComparisonPlayers,
+  writePlayerColumns,
+} from './playerboardVeoPlayers'
 
 const PLAYER = '00000000-0000-4000-8000-000000000001'
 const PERSON = '00000000-0000-4000-8000-000000000002'
@@ -62,5 +75,47 @@ describe('player columns in the browser storage', () => {
     vi.stubGlobal('localStorage', { getItem: () => { throw new Error('blocked') }, setItem: () => { throw new Error('blocked') } })
     expect(readPlayerColumns('columns', ['goals'])).toEqual(['goals'])
     expect(() => writePlayerColumns('columns', ['goals'])).not.toThrow()
+  })
+})
+
+describe('Veo Analytics players', () => {
+  afterEach(() => { vi.unstubAllGlobals() })
+
+  it('adds position and own row from the roster and drops jerseys without anything', () => {
+    const rows = seasonTableRows(seasonPlayerRows([{ players: [
+      { jerseyNumber: 7, playerId: PLAYER, personId: PERSON, name: 'Ada Arnold', stats: { football_goal_total: 2 } },
+      { jerseyNumber: 30, playerId: null, personId: null, name: null, stats: { football_goal_total: 0 } },
+    ] }]), [{ id: PLAYER, position: 'ST', isSelf: true }])
+    expect(rows).toHaveLength(1)
+    expect(rows[0]).toMatchObject({ key: `player:${PLAYER}`, position: 'ST', isSelf: true, matchCount: 1, values: { goals: 2, matches: 1 } })
+  })
+
+  it('assigns the own shots and goals of every match to the player or the bare jersey', () => {
+    const shot = { teamAssociation: 'own', periodNumber: 1, periodTimeMs: 0, x: 0.9, y: 0.5, assistJerseyNumber: null } as const
+    const byPlayer = seasonShotsByPlayer([{
+      fixtureId: 'f1', kickoffAt: '2026-09-05T10:00:00Z', kind: 'match', opponentName: 'Gegner', isHome: true, ownScore: 1, opponentScore: 0,
+      veoUrl: 'https://app.veo.co/matches/c1/', analysisStatus: 'complete', analyticsVersion: '2', periods: [], availability: {}, teamStats: [], passPossession: null,
+      shots: [
+        { ...shot, id: 's1', eventType: 'FootballShot', jerseyNumber: 7, playerId: PLAYER, videoTimeMs: 10_000 },
+        { ...shot, id: 's2', eventType: 'FootballShot', jerseyNumber: 12, playerId: null, videoTimeMs: 20_000 },
+        { ...shot, id: 's3', eventType: 'FootballShot', jerseyNumber: 4, playerId: null, videoTimeMs: 30_000, teamAssociation: 'opponent' },
+      ],
+    }], 'Europe/Berlin')
+    expect([...byPlayer.keys()]).toEqual([`player:${PLAYER}`, 'jersey:12'])
+    expect(byPlayer.get(`player:${PLAYER}`)?.[0]).toMatchObject({ goal: false, href: 'https://app.veo.co/matches/c1/#t=0:07', title: 'Schuss gegen Gegner am 5. Sept.' })
+  })
+
+  it('keeps at most three valid leaderboards and the comparison per team in the browser', () => {
+    const store = new Map<string, string>()
+    vi.stubGlobal('localStorage', { getItem: (key: string) => store.get(key) ?? null, setItem: (key: string, value: string) => { store.set(key, value) } })
+    store.set('boards', JSON.stringify(['goals', 'passes', 'saves', 'sprints', 'assists']))
+    expect(readLeaderboardMetrics('boards', DEFAULT_LEADERBOARD_METRICS)).toEqual(['goals', 'saves', 'sprints'])
+    store.set('boards', JSON.stringify(['passes']))
+    expect(readLeaderboardMetrics('boards', DEFAULT_LEADERBOARD_METRICS)).toEqual([...DEFAULT_LEADERBOARD_METRICS])
+    expect(readComparisonPlayers('pair')).toBeNull()
+    writeComparisonPlayers('pair', { a: 'player:a', b: 'jersey:12' })
+    expect(readComparisonPlayers('pair')).toEqual({ a: 'player:a', b: 'jersey:12' })
+    store.set('pair', '{"a": 1}')
+    expect(readComparisonPlayers('pair')).toBeNull()
   })
 })

@@ -3,7 +3,7 @@ import type { PlayerboardVeoMatchAnalysis, PlayerboardVeoMatchTracks } from '@ve
 import { playerHeatmapFromTracks, shotsFromEvents, type StoredTrack } from '@vereinsfunk/domain'
 import { playerboardErrorMessage } from '../utils/playerboardErrors'
 import { decodeBase64, formatClock, veoVideoLink } from '../utils/playerboardVeoAnalysis'
-import type { PlayerShotMarker } from './PlayerboardVeoPlayerShotMap.vue'
+import type { PlayerShotMarker } from '../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 3: Reiter "Karten" der Spielerkarte in einem Spiel (Inventar §2.3): Heatmap je
 // Halbzeit mit Zeitabschnitt in 60-s-Schritten aus den Positionsdaten der Rueckennummer, sonst Veos

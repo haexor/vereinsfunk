@@ -1,5 +1,18 @@
-import type { PlayerboardPlayer, PlayerboardVeoMatchAnalysis } from '@vereinsfunk/contracts'
-import { isVeoParticipant, playerMetricDefinition, playerMetricValues, playerStatsForPeriod, validPlayerColumns, type VeoPlayerMetricValues } from '@vereinsfunk/domain'
+import type { PlayerboardPlayer, PlayerboardVeoMatchAnalysis, PlayerboardVeoSeasonMatch } from '@vereinsfunk/contracts'
+import {
+  isVeoParticipant,
+  LEADERBOARD_MAX,
+  playerMetricDefinition,
+  playerMetricValues,
+  playerStatsForPeriod,
+  seasonPlayerKey,
+  shotsFromEvents,
+  validPlayerColumns,
+  VEO_LEADERBOARD_METRICS,
+  type VeoPlayerMetricValues,
+  type VeoSeasonPlayerRow,
+} from '@vereinsfunk/domain'
+import { veoVideoLink } from './playerboardVeoAnalysis'
 
 // Spec 002, PR 3: Spielertabelle und Spielerkarte wie Veo (Inventar §2.2, §2.3). Zeilen aus der
 // Spielauswertung, Darstellung der Werte und die Spaltenwahl im Browser-Speicher.
@@ -41,6 +54,27 @@ export function matchPlayerRows(players: PlayerboardVeoMatchAnalysis['players'],
       values,
     }]
   })
+}
+
+/** Spec 002, PR 5: Saisonzeilen fuer Tabelle, Ranglisten und Vergleich, mit Position und eigener Zeile aus dem Kader. */
+export function seasonTableRows(rows: readonly VeoSeasonPlayerRow[], roster: readonly RosterEntry[]): (VeoPlayerRow & { matchCount: number })[] {
+  const byId = new Map(roster.map((player) => [player.id, player]))
+  return rows.flatMap((row) => {
+    const entry = row.playerId ? byId.get(row.playerId) : undefined
+    const position = entry?.position ?? null
+    if (!isVeoParticipant(row.values, position)) return []
+    return [{ ...row, position, isSelf: entry?.isSelf ?? false }]
+  })
+}
+
+/** Ein Abschluss auf der Spieler-Schusskarte; `href` oeffnet die Stelle im Veo-Video. */
+export interface PlayerShotMarker {
+  key: string
+  goal: boolean
+  x: number | null
+  y: number | null
+  href: string | null
+  title: string
 }
 
 /** "Ada Arnold" bzw. "Nummer 7" fuer nicht zugeordnete Rueckennummern. */
@@ -90,4 +124,57 @@ export function writePlayerColumns(key: string, columns: readonly string[]): voi
   } catch {
     // Privates Fenster oder gesperrter Speicher: die Wahl gilt dann nur bis zum Neuladen.
   }
+}
+
+/** Gewaehlte Ranglisten (bis 3); ungueltiger Speicherinhalt ergibt den Standard. */
+export function readLeaderboardMetrics(key: string, fallback: readonly string[]): string[] {
+  const allowed = readPlayerColumns(key, fallback).filter((id) => VEO_LEADERBOARD_METRICS.includes(id)).slice(0, LEADERBOARD_MAX)
+  return allowed.length > 0 ? allowed : [...fallback]
+}
+
+/** Spielervergleich je Mannschaft: zuletzt gewaehlte Schluessel, sonst null. */
+export function readComparisonPlayers(key: string): { a: string; b: string } | null {
+  try {
+    const stored = JSON.parse(globalThis.localStorage?.getItem(key) ?? 'null') as unknown
+    if (stored && typeof stored === 'object' && typeof (stored as { a?: unknown }).a === 'string' && typeof (stored as { b?: unknown }).b === 'string') {
+      return { a: (stored as { a: string }).a, b: (stored as { b: string }).b }
+    }
+  } catch {
+    // Kaputter oder gesperrter Speicher: Standardwahl.
+  }
+  return null
+}
+
+export function writeComparisonPlayers(key: string, value: { a: string; b: string }): void {
+  try {
+    globalThis.localStorage?.setItem(key, JSON.stringify(value))
+  } catch {
+    // Wie writePlayerColumns: die Wahl gilt dann nur bis zum Neuladen.
+  }
+}
+
+/**
+ * Eigene Schuesse und Tore der gefilterten Spiele je Saisonzeile (Schluessel wie seasonPlayerKey).
+ * Abschluesse ohne Rueckennummer gehoeren zu keinem Spieler und fehlen hier.
+ */
+export function seasonShotsByPlayer(matches: readonly PlayerboardVeoSeasonMatch[], timeZone: string): Map<string, PlayerShotMarker[]> {
+  const date = new Intl.DateTimeFormat('de-DE', { day: 'numeric', month: 'short', timeZone })
+  const result = new Map<string, PlayerShotMarker[]>()
+  for (const match of matches) {
+    for (const shot of shotsFromEvents(match.shots)) {
+      if (shot.team !== 'own' || (shot.playerId === null && shot.jerseyNumber === null)) continue
+      const key = seasonPlayerKey(shot)
+      const list = result.get(key) ?? []
+      result.set(key, list)
+      list.push({
+        key: `${match.fixtureId}:${shot.id}`,
+        goal: shot.goal,
+        x: shot.x,
+        y: shot.y,
+        href: veoVideoLink(match.veoUrl, shot.videoTimeMs),
+        title: `${shot.goal ? 'Tor' : 'Schuss'} gegen ${match.opponentName ?? 'unbekannt'} am ${date.format(new Date(match.kickoffAt))}`,
+      })
+    }
+  }
+  return result
 }

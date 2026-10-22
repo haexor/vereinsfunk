@@ -76,11 +76,15 @@ Kennzahlen, Verlauf, Siegquote, Schusskarte, Zonen und Radar rechnet das Web mit
 
 Response `PlayerboardVeoTeamViewsSchema` (siehe `PUT`). Hat die Mannschaft keine eigene Auswahl, kommen Veos Standards.
 
-Ranglisten, Tabelle, Vergleich, Durchschnitte, Kennzahlen je Spiel und Radar rechnet das Web mit `packages/domain` aus `season` (Spieler aus `matches`). So gilt eine Regel an einer Stelle (R-08). Für das Radar mit einer anderen Mannschaft ruft das Web dieselben Endpunkte für deren `teamId` auf. Darf die Person deren Werte nicht sehen, kommt `404`.
+Ranglisten, Tabelle, Vergleich, Durchschnitte, Kennzahlen je Spiel und Radar rechnet das Web mit `packages/domain` aus `season` und `season/players`. So gilt eine Regel an einer Stelle (R-08). Für das Radar mit einer anderen Mannschaft ruft das Web dieselben Endpunkte für deren `teamId` auf. Darf die Person deren Werte nicht sehen, kommt `404`.
 
-## `GET /v1/playerboard/teams/:teamId/veo/season/players/:playerId/heatmaps`
+## `GET /v1/playerboard/teams/:teamId/veo/season/players` (Veo Analytics, Reiter Spieler)
 
-Query wie bei `matches`. Response `{ items: { fixtureId, secondsPlayed: int | null, width, height, cells: base64 }[] }`. Das Web summiert gewichtet (R-05).
+Query wie bei `season`. Response `PlayerboardVeoPlayerSeasonMatchSchema[]`, ältestes Spiel zuerst: `{ fixtureId, kickoffAt, opponentName, ownScore, opponentScore, analyticsVersion, players: { jerseyNumber, playerId | null, personId | null, name | null, stats: Record<statType, number> }[] }`. Schüsse je Spieler kommen aus `season` (`shots[].playerId`, sonst `jerseyNumber`).
+
+## `GET /v1/playerboard/teams/:teamId/veo/season/heatmaps`
+
+Query wie bei `season`, dazu genau eins von `playerId` (Spieler der Mannschaft, auch über wechselnde Rückennummern) oder `jerseyNumber` (Nummer ohne Zuordnung). Response `PlayerboardVeoPlayerHeatmapSchema[]`: `{ fixtureId, jerseyNumber, width, height, cells: base64, secondsPlayed: int | null }`, nur Matrizen des ganzen Spiels. Das Web summiert nach Spielzeit gewichtet (R-05). Beides oder keins: `400 invalid_filter`; ein Spieler einer anderen Mannschaft: `404 veo_player_not_found`.
 
 ## `PUT /v1/playerboard/teams/:teamId/veo/views`
 

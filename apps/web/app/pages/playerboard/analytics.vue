@@ -1,25 +1,42 @@
 <script setup lang="ts">
-import { PlayerboardVeoKeyMetricIdSchema, type PlayerboardVeoSeasonMatch, type PlayerboardVeoTeamViews } from '@vereinsfunk/contracts'
-import { DEFAULT_KEY_METRICS, seasonThirdPercents } from '@vereinsfunk/domain'
+import {
+  PlayerboardPlayerSchema,
+  PlayerboardVeoKeyMetricIdSchema,
+  type PlayerboardPlayer,
+  type PlayerboardVeoPlayerSeasonMatch,
+  type PlayerboardVeoSeasonMatch,
+  type PlayerboardVeoTeamViews,
+} from '@vereinsfunk/contracts'
+import { DEFAULT_KEY_METRICS, DEFAULT_SEASON_PLAYER_COLUMNS, seasonPlayerRows, seasonThirdPercents } from '@vereinsfunk/domain'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 import { scoreLabel } from '../../utils/playerboardVeo'
 import { filterFromQuery, filterToQuery, seasonFilter, type AnalyticsFilterState } from '../../utils/playerboardVeoAnalytics'
+import { playerRowName, seasonShotsByPlayer, seasonTableRows } from '../../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 4: Veo Analytics -- Nachbau von Veos Analytics Studio, Reiter "Team stats"
 // (Inventar §1b): Filter, Kennzahlen mit Verlauf, Schusskarte, Pass- und Ballbesitzzonen,
 // Vergleichsradar. Sichtbar fuer alle, die die Kennzahlen der Mannschaft sehen (stats_visibility).
 // Der Filter steht in der URL, damit sich eine Ansicht teilen laesst.
+// PR 5: Reiter "Spieler" wie Veos "Player stats" (Inventar §2.1): Ranglisten, Spielertabelle,
+// Spieler-Schusskarte, Positions-Heatmap, Spielervergleich und Spielerkarte; ?ansicht=spieler.
 const route = useRoute()
 const router = useRouter()
 const { teams, team, teamId, organizationTimezone, canManage } = await usePlayerboardTeam()
-const { loadSeason, loadViews, saveViews } = usePlayerboardVeoSeason()
+const { loadSeason, loadPlayerSeason, loadViews, saveViews } = usePlayerboardVeoSeason()
 const { loadMatches } = usePlayerboardVeo()
+const api = useApiClient()
 
+type View = 'team' | 'players'
+const viewFromQuery = (query: Record<string, unknown>): View => (query.ansicht === 'spieler' ? 'players' : 'team')
+const view = ref<View>(viewFromQuery(route.query))
 const filter = ref<AnalyticsFilterState>(filterFromQuery(route.query))
-watch(filter, (value) => { void router.replace({ query: filterToQuery(value) }) }, { deep: true })
+watch([filter, view], ([value, current]) => {
+  void router.replace({ query: { ...filterToQuery(value), ...(current === 'players' ? { ansicht: 'spieler' } : {}) } })
+}, { deep: true })
 watch(() => route.query, (query) => {
   const next = filterFromQuery(query)
   if (JSON.stringify(filterToQuery(filter.value)) !== JSON.stringify(filterToQuery(next))) filter.value = next
+  if (view.value !== viewFromQuery(query)) view.value = viewFromQuery(query)
 }, { deep: true })
 
 const matches = ref<PlayerboardVeoSeasonMatch[]>([])
@@ -106,6 +123,59 @@ const passThirds = computed(() => ({ own: seasonThirdPercents(matches.value, 'ow
 const possessionThirds = computed(() => ({ own: seasonThirdPercents(matches.value, 'own', 'possession'), opponent: seasonThirdPercents(matches.value, 'opponent', 'possession') }))
 const zoneTeam = ref<{ pass: 'own' | 'opponent'; possession: 'own' | 'opponent' }>({ pass: 'own', possession: 'own' })
 
+// --- Reiter Spieler ---------------------------------------------------------------------------------
+const playerMatches = ref<PlayerboardVeoPlayerSeasonMatch[]>([])
+const roster = ref<PlayerboardPlayer[]>([])
+const playersLoading = ref(false)
+const playersError = ref('')
+const playerRuns = useLatestRequest()
+async function loadPlayers() {
+  const isLatest = playerRuns.begin()
+  playersError.value = ''
+  if (!teamId.value || view.value !== 'players') return
+  playersLoading.value = true
+  const requested = teamId.value
+  try {
+    const [loaded, players] = await Promise.all([
+      loadPlayerSeason(requested, seasonFilter(filter.value)),
+      // Position und eigene Zeile; ohne Kader bleiben die Werte vollstaendig.
+      api.request(`/v1/playerboard/teams/${requested}/players`, {}, PlayerboardPlayerSchema.array()).catch(() => [] as PlayerboardPlayer[]),
+    ])
+    if (!isLatest()) return
+    playerMatches.value = loaded
+    roster.value = players
+  } catch (error) {
+    if (isLatest()) playersError.value = playerboardErrorMessage(error, 'Die Spielerwerte konnten nicht geladen werden.')
+  } finally {
+    if (isLatest()) playersLoading.value = false
+  }
+}
+void loadPlayers()
+watch([teamId, filter, view], () => { void loadPlayers() }, { deep: true })
+
+const playerRows = computed(() => seasonTableRows(seasonPlayerRows(playerMatches.value), roster.value))
+const shotsByPlayer = computed(() => seasonShotsByPlayer(matches.value, organizationTimezone.value))
+const { heatmapOf } = usePlayerboardVeoPlayerHeatmaps(teamId, computed(() => seasonFilter(filter.value)))
+const selectedPlayerKey = ref<string | null>(null)
+const selectedPlayer = computed(() => playerRows.value.find((row) => row.key === selectedPlayerKey.value) ?? null)
+watch([teamId, filter], () => { selectedPlayerKey.value = null }, { deep: true })
+const sourceLabel = computed(() => `${playerMatches.value.length} ${playerMatches.value.length === 1 ? 'Spiel' : 'Spiele'} gefiltert`)
+
+const PLAYER_SECTIONS = [
+  { id: 'analytics-leaderboards', label: 'Ranglisten' },
+  { id: 'analytics-stats-table', label: 'Spielertabelle' },
+  { id: 'analytics-player-shot-map', label: 'Schusskarte' },
+  { id: 'analytics-position-heatmap', label: 'Heatmap' },
+  { id: 'analytics-player-comparison', label: 'Spielervergleich' },
+] as const
+const PLAYER_READ_ME = {
+  leaderboards: 'Die Ranglisten zeigen die besten fünf Spieler über die gefilterten Spiele. Veo erkennt die Werte automatisch und ordnet sie über die Rückennummer zu; was du in Veo korrigierst, erscheint hier auch.',
+  table: 'Die Tabelle zeigt die Summen jedes Spielers über die gefilterten Spiele; die Höchstgeschwindigkeit ist der beste Wert, die Ø-Geschwindigkeit nach Spielzeit gewichtet. Sortiere mit einem Klick auf den Spaltenkopf; ein Klick auf einen Spieler öffnet seine Karte.',
+  shots: 'Die Karte zeigt, wo ein Spieler abgeschlossen hat; seine Mannschaft greift nach rechts an. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor; ein Klick öffnet die Stelle im Veo-Video.',
+  heatmap: 'Je röter die Fläche, desto mehr hielt sich der Spieler dort auf. Jedes Spiel ist so gedreht, dass die Mannschaft nach rechts angreift; Spiele mit mehr Spielzeit zählen stärker.',
+  comparison: 'Wähle zwei Spieler, um ihre Werte über die gefilterten Spiele nebeneinander zu sehen. Der höhere Wert ist hervorgehoben.',
+} as const
+
 const SECTIONS = [
   { id: 'analytics-key-metrics', label: 'Kennzahlen' },
   { id: 'analytics-shot-map', label: 'Schusskarte' },
@@ -134,8 +204,12 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
 
     <PlayerboardTeamEmpty v-if="!team" />
     <template v-else>
+      <div class="mb-4 flex gap-2" role="group" aria-label="Ansicht">
+        <button type="button" :class="toggleClass(view === 'team')" class="px-5 text-sm" :aria-pressed="view === 'team'" @click="view = 'team'">Mannschaft</button>
+        <button type="button" :class="toggleClass(view === 'players')" class="px-5 text-sm" :aria-pressed="view === 'players'" @click="view = 'players'">Spieler</button>
+      </div>
       <nav class="mb-4 flex gap-2 overflow-x-auto pb-1" aria-label="Abschnitte">
-        <a v-for="section in SECTIONS" :key="section.id" :href="`#${section.id}`" class="focus-ring inline-flex min-h-11 shrink-0 items-center rounded-full border border-[#dfe0d9] bg-white px-4 text-xs font-semibold text-ink">{{ section.label }}</a>
+        <a v-for="section in (view === 'team' ? SECTIONS : PLAYER_SECTIONS)" :key="section.id" :href="`#${section.id}`" class="focus-ring inline-flex min-h-11 shrink-0 items-center rounded-full border border-[#dfe0d9] bg-white px-4 text-xs font-semibold text-ink">{{ section.label }}</a>
       </nav>
       <PlayerboardVeoFilters v-model="filter" :options="selectionOptions" class="mb-3" @need-options="loadSelectionOptions" />
       <p class="mb-5 text-sm text-[#5b625d]" role="status">
@@ -148,7 +222,7 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
       <div v-if="!loading && matches.length === 0 && !errorMessage" class="card p-6 text-sm text-[#6c756f]">
         Für diese Filter gibt es keine Spiele mit Veo-Aufnahme. Ändere die Filter oder gleiche Veo unter „Veo“ ab.
       </div>
-      <div v-else class="grid gap-6" :aria-busy="loading">
+      <div v-else-if="view === 'team'" class="grid gap-6" :aria-busy="loading">
         <PlayerboardVeoAnalysisSection :id="SECTIONS[0].id" title="Kennzahlen" :read-me="READ_ME.keyMetrics">
           <PlayerboardVeoKeyMetrics
             :matches="matches" :metrics="keyMetrics" :can-edit="canManage" :team-id="teamId!" :own-label="ownLabel" :timezone="organizationTimezone"
@@ -174,6 +248,57 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
             @save="(radar) => save({ radar })"
           />
         </PlayerboardVeoAnalysisSection>
+      </div>
+      <div v-else :aria-busy="playersLoading">
+        <p v-if="playersLoading" class="mb-4 text-sm text-[#5b625d]" role="status">Spielerwerte werden geladen …</p>
+        <p v-if="playersError" class="mb-4 text-sm text-amber-800" role="alert">{{ playersError }}</p>
+        <div v-if="!playersLoading && playerRows.length === 0 && !playersError" class="card p-6 text-sm text-[#6c756f]">
+          Veo hat in diesen Spielen keine Spielerwerte erkannt.
+        </div>
+        <div v-else-if="playerRows.length" class="grid gap-6 lg:grid-cols-[minmax(0,1fr)_22rem] lg:items-start">
+          <div class="grid min-w-0 gap-6">
+            <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[0].id" title="Ranglisten" :read-me="PLAYER_READ_ME.leaderboards">
+              <PlayerboardVeoLeaderboards :rows="playerRows" @select="(row) => { selectedPlayerKey = row.key }" />
+            </PlayerboardVeoAnalysisSection>
+            <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[1].id" title="Spielertabelle" :read-me="PLAYER_READ_ME.table">
+              <PlayerboardVeoPlayerStatsTable
+                :rows="playerRows" :caption="`Spielerwerte ${ownLabel}, ${sourceLabel}`" storage-key="vereinsfunk.veo.season-columns"
+                :default-columns="DEFAULT_SEASON_PLAYER_COLUMNS" :selected-key="selectedPlayerKey" @select="(row) => { selectedPlayerKey = row.key }"
+              />
+            </PlayerboardVeoAnalysisSection>
+            <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[2].id" title="Spieler-Schusskarte" :read-me="PLAYER_READ_ME.shots">
+              <PlayerboardVeoPlayersShotMap :rows="playerRows" :shots-by-player="shotsByPlayer" />
+            </PlayerboardVeoAnalysisSection>
+            <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[3].id" title="Positions-Heatmap" :read-me="PLAYER_READ_ME.heatmap">
+              <PlayerboardVeoPlayersHeatmap :rows="playerRows" :heatmap-of="heatmapOf" />
+            </PlayerboardVeoAnalysisSection>
+            <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[4].id" title="Spielervergleich" :read-me="PLAYER_READ_ME.comparison">
+              <PlayerboardVeoPlayerComparison :team-id="teamId!" :rows="playerRows" :shots-by-player="shotsByPlayer" :heatmap-of="heatmapOf" />
+            </PlayerboardVeoAnalysisSection>
+          </div>
+          <!-- Spielerkarte: auf dem Handy als Blatt von unten, ab lg als Seitenleiste. -->
+          <div v-if="selectedPlayer" class="fixed inset-0 z-30 bg-black/30 lg:hidden" aria-hidden="true" @click="selectedPlayerKey = null" />
+          <div
+            v-if="selectedPlayer"
+            class="fixed inset-x-0 bottom-0 z-40 max-h-[85vh] overflow-y-auto rounded-t-2xl bg-white shadow-[0_-8px_30px_rgba(0,0,0,.18)] lg:sticky lg:top-4 lg:max-h-[calc(100vh-2rem)] lg:rounded-2xl lg:shadow-none"
+          >
+            <PlayerboardVeoPlayerCard :row="selectedPlayer" :source-label="sourceLabel" @close="selectedPlayerKey = null">
+              <template #maps>
+                <div class="grid gap-5">
+                  <section>
+                    <h4 class="mb-2 text-sm font-bold text-ink">Heatmap</h4>
+                    <PlayerboardVeoPlayerSeasonHeatmap :player="selectedPlayer" :heatmap-of="heatmapOf" :label="`Heatmap ${playerRowName(selectedPlayer)}`" />
+                  </section>
+                  <section>
+                    <h4 class="mb-2 text-sm font-bold text-ink">Schusskarte</h4>
+                    <PlayerboardVeoPlayerShotMap :shots="shotsByPlayer.get(selectedPlayer.key) ?? []" :label="`Schusskarte ${playerRowName(selectedPlayer)}`" />
+                  </section>
+                </div>
+              </template>
+            </PlayerboardVeoPlayerCard>
+          </div>
+          <p v-else class="hidden rounded-2xl border border-dashed border-[#dfe0d9] p-4 text-sm text-[#6c756f] lg:block">Wähle einen Spieler, um seine Karte zu sehen.</p>
+        </div>
       </div>
     </template>
   </div>
