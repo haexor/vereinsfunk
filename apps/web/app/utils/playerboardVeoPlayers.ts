@@ -84,6 +84,11 @@ export function initialPlayerKey(rows: readonly { key: string }[], preselected: 
   return rows.find((row) => row.key === preselected)?.key ?? rows[0]?.key ?? null
 }
 
+// Eintraege der gemeinsamen Spielerliste (PlayerboardVeoMapPlayers) aus Spielerzeilen.
+export function playerMapOptions(rows: readonly (Pick<VeoPlayerRow, 'key' | 'name' | 'jerseyNumber' | 'position'> & { score?: number })[]): { key: string; name: string; subtitle?: string; score?: number }[] {
+  return rows.map((row) => ({ key: row.key, name: playerRowName(row), subtitle: playerRowSubtitle(row) || undefined, score: row.score }))
+}
+
 export function playerRowName(row: Pick<VeoPlayerRow, 'name' | 'jerseyNumber'>): string {
   if (row.name) return row.name
   return row.jerseyNumber === null ? 'Unbekannter Spieler' : `Nummer ${row.jerseyNumber}`

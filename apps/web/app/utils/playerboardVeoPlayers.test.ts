@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   formatPlayerMetric,
   initialPlayerKey,
+  playerMapOptions,
   matchPlayerRows,
   playerMetricHeader,
   playerRowName,
@@ -130,4 +131,15 @@ describe('initialPlayerKey', () => {
     expect(initialPlayerKey(rows, undefined)).toBe('a')
   })
   it('has no player for an empty list', () => expect(initialPlayerKey([], 'a')).toBeNull())
+})
+
+describe('playerMapOptions', () => {
+  it('names the players like the other lists and keeps the score', () => {
+    const [named, unnamed] = playerMapOptions([
+      { key: 'a', name: 'Ada Arnold', jerseyNumber: 7, position: 'Sturm', score: 3 },
+      { key: 'b', name: null, jerseyNumber: 12, position: null },
+    ])
+    expect(named).toEqual({ key: 'a', name: playerRowName({ name: 'Ada Arnold', jerseyNumber: 7 }), subtitle: playerRowSubtitle({ jerseyNumber: 7, position: 'Sturm' }) || undefined, score: 3 })
+    expect(unnamed).toMatchObject({ key: 'b', name: playerRowName({ name: null, jerseyNumber: 12 }), score: undefined })
+  })
 })
