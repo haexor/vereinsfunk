@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { sortPlayerRows } from '@vereinsfunk/domain'
-import { playerRowName, type PlayerShotMarker, type VeoPlayerRow } from '../utils/playerboardVeoPlayers'
+import { initialPlayerKey, playerRowName, type PlayerShotMarker, type VeoPlayerRow } from '../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 5: Spieler-Schusskarte ueber die gefilterten Spiele (Inventar §2.1.3): Auswahl
 // Abschluesse, Schuesse oder Tore; daneben die Spieler mit mindestens einem solchen Abschluss, nach
-// Anzahl sortiert. Zuerst ist der Spieler mit den meisten gewaehlt.
-const props = defineProps<{ rows: readonly VeoPlayerRow[]; shotsByPlayer: ReadonlyMap<string, readonly PlayerShotMarker[]> }>()
+// Anzahl sortiert. Zuerst ist der von der Seite vorgewaehlte Spieler (Rangliste, Spielertabelle) gewaehlt,
+// sonst der mit den meisten; die Liste erlaubt jeden anderen.
+const props = defineProps<{ rows: readonly VeoPlayerRow[]; shotsByPlayer: ReadonlyMap<string, readonly PlayerShotMarker[]>; preselected?: string | null }>()
 
 type Kind = 'all' | 'shots' | 'goals'
 const KINDS: { id: Kind; label: string }[] = [{ id: 'all', label: 'Abschlüsse' }, { id: 'shots', label: 'Schüsse' }, { id: 'goals', label: 'Tore' }]
@@ -20,7 +21,8 @@ const listed = computed(() => sortPlayerRows(
   { column: 'score', direction: 'desc' },
 ))
 const selected = ref<string | null>(null)
-watch(listed, (rows) => { if (!rows.some((row) => row.key === selected.value)) selected.value = rows[0]?.key ?? null }, { immediate: true })
+watch(listed, (rows) => { if (!rows.some((row) => row.key === selected.value)) selected.value = initialPlayerKey(rows, props.preselected) }, { immediate: true })
+watch(() => props.preselected, (key) => { if (key) selected.value = initialPlayerKey(listed.value, key) })
 const selectedRow = computed(() => listed.value.find((row) => row.key === selected.value) ?? null)
 const shots = computed(() => (selectedRow.value ? (props.shotsByPlayer.get(selectedRow.value.key) ?? []).filter((shot) => matches(shot, kind.value)) : []))
 const EMPTY: Record<Kind, string> = {

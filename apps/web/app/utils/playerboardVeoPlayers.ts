@@ -77,6 +77,11 @@ export interface PlayerShotMarker {
   title: string
 }
 
+/** Liefert den vorausgewaehlten Spieler, sonst den ersten Spieler der Liste. */
+export function initialPlayerKey(rows: readonly { key: string }[], preselected: string | null | undefined): string | null {
+  return rows.find((row) => row.key === preselected)?.key ?? rows[0]?.key ?? null
+}
+
 /** "Ada Arnold" bzw. "Nummer 7" fuer nicht zugeordnete Rueckennummern. */
 export function playerRowName(row: Pick<VeoPlayerRow, 'name' | 'jerseyNumber'>): string {
   if (row.name) return row.name

@@ -182,7 +182,7 @@ const PLAYER_SECTIONS = [
 ] as const
 const PLAYER_READ_ME = {
   leaderboards: 'Die Ranglisten zeigen die besten fünf Spieler über die gefilterten Spiele. Veo erkennt die Werte automatisch und ordnet sie über die Rückennummer zu; was du in Veo korrigierst, erscheint hier auch.',
-  table: 'Die Tabelle zeigt die Summen jedes Spielers über die gefilterten Spiele; die Höchstgeschwindigkeit ist der beste Wert, die Ø-Geschwindigkeit nach Spielzeit gewichtet. Sortiere mit einem Klick auf den Spaltenkopf; ein Klick auf einen Spieler öffnet seine Karte.',
+  table: 'Die Tabelle zeigt die Summen jedes Spielers über die gefilterten Spiele; die Höchstgeschwindigkeit ist der beste Wert, die Ø-Geschwindigkeit nach Spielzeit gewichtet. Sortiere mit einem Klick auf den Spaltenkopf; ein Klick auf einen Spieler öffnet seine Karte und wählt ihn in Schusskarte, Heatmap und Spielervergleich vor; dort bleibt jeder andere Spieler wählbar.',
   shots: 'Die Karte zeigt, wo ein Spieler abgeschlossen hat; seine Mannschaft greift nach rechts an. Gefüllte Kreise sind Tore, Ringe Schüsse ohne Tor; ein Klick öffnet die Stelle im Veo-Video.',
   heatmap: 'Je röter die Fläche, desto mehr hielt sich der Spieler dort auf. Jedes Spiel ist so gedreht, dass die Mannschaft nach rechts angreift; Spiele mit mehr Spielzeit zählen stärker.',
   comparison: 'Wähle zwei Spieler, um ihre Werte über die gefilterten Spiele nebeneinander zu sehen. Der höhere Wert ist hervorgehoben.',
@@ -285,13 +285,13 @@ const toggleClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border
               />
             </PlayerboardVeoAnalysisSection>
             <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[2].id" title="Spieler-Schusskarte" :read-me="PLAYER_READ_ME.shots">
-              <PlayerboardVeoPlayersShotMap :rows="playerRows" :shots-by-player="shotsByPlayer" />
+              <PlayerboardVeoPlayersShotMap :rows="playerRows" :shots-by-player="shotsByPlayer" :preselected="selectedPlayerKey" />
             </PlayerboardVeoAnalysisSection>
             <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[3].id" title="Positions-Heatmap" :read-me="PLAYER_READ_ME.heatmap">
-              <PlayerboardVeoPlayersHeatmap :rows="playerRows" :heatmap-of="heatmapOf" />
+              <PlayerboardVeoPlayersHeatmap :rows="playerRows" :heatmap-of="heatmapOf" :preselected="selectedPlayerKey" />
             </PlayerboardVeoAnalysisSection>
             <PlayerboardVeoAnalysisSection :id="PLAYER_SECTIONS[4].id" title="Spielervergleich" :read-me="PLAYER_READ_ME.comparison">
-              <PlayerboardVeoPlayerComparison :team-id="teamId!" :rows="playerRows" :shots-by-player="shotsByPlayer" :heatmap-of="heatmapOf" />
+              <PlayerboardVeoPlayerComparison :team-id="teamId!" :rows="playerRows" :preselected="selectedPlayerKey" :shots-by-player="shotsByPlayer" :heatmap-of="heatmapOf" />
             </PlayerboardVeoAnalysisSection>
           </div>
           <!-- Spielerkarte: auf dem Handy als Blatt von unten, ab lg als Seitenleiste. -->
