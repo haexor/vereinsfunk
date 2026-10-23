@@ -1,9 +1,12 @@
 import {
   PlayerboardRankingQuerySchema,
+  PublicPlayerboardTrainingSchema,
+  PublicPlayerboardTrainingSummarySchema,
   PublicPlayerboardPhotoSchema,
   PublicPlayerboardRankingEntrySchema,
   PublicPlayerboardTeamSchema,
   PublicPlayerboardVeoMatchSchema,
+  UuidSchema,
 } from '@vereinsfunk/contracts'
 import { currentSeasonStart, localDateKey } from '@vereinsfunk/domain'
 import type { FastifyInstance, FastifyReply, FastifyRequest } from 'fastify'
@@ -43,7 +46,7 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     }
     const info = await supabaseClients.forService().rpc('playerboard_public_team_info', { org_slug: params.data.orgSlug, team_slug: params.data.teamSlug })
     if (info.error) throw info.error
-    const row = (info.data as { organization_name: string; team_name: string; points_enabled: boolean; veo_stats_enabled: boolean; photos_enabled: boolean }[] | null)?.[0]
+    const row = (info.data as { organization_name: string; team_name: string; points_enabled: boolean; trainings_enabled: boolean; veo_stats_enabled: boolean; photos_enabled: boolean }[] | null)?.[0]
     if (!row) {
       reply.code(404).send({ error: 'not_found', correlationId: request.id })
       return null
@@ -76,9 +79,36 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     const presentation = await loadTeamPresentation(team.orgSlug, team.teamSlug)
     return reply.code(200).send(PublicPlayerboardTeamSchema.parse({
       organizationName: team.row.organization_name, teamName: team.row.team_name,
-      tabs: { points: team.row.points_enabled, veoStats: team.row.veo_stats_enabled, photos: team.row.photos_enabled },
+      tabs: { points: team.row.points_enabled, trainings: team.row.trainings_enabled, veoStats: team.row.veo_stats_enabled, photos: team.row.photos_enabled },
       ...presentation,
     }))
+  })
+
+  app.get('/v1/public/playerboard/:orgSlug/:teamSlug/trainings', async (request, reply) => {
+    const team = await loadTeam(request, reply)
+    if (!team) return
+    if (!team.row.trainings_enabled) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const trainings = await supabaseClients.forService().rpc('playerboard_public_trainings', {
+      org_slug: team.orgSlug, team_slug: team.teamSlug,
+    })
+    if (trainings.error) throw trainings.error
+    return reply.code(200).send((trainings.data ?? []).map((row: { training_id: string; training_date: string }) =>
+      PublicPlayerboardTrainingSummarySchema.parse({ id: row.training_id, trainingDate: row.training_date }),
+    ))
+  })
+
+  app.get('/v1/public/playerboard/:orgSlug/:teamSlug/trainings/:trainingId', async (request, reply) => {
+    const team = await loadTeam(request, reply)
+    if (!team) return
+    if (!team.row.trainings_enabled) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const params = z.object({ trainingId: UuidSchema }).safeParse(request.params)
+    if (!params.success) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    const training = await supabaseClients.forService().rpc('playerboard_public_training', {
+      org_slug: team.orgSlug, team_slug: team.teamSlug, target_training_id: params.data.trainingId,
+    })
+    if (training.error) throw training.error
+    if (!training.data) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
+    return reply.code(200).send(PublicPlayerboardTrainingSchema.parse(training.data))
   })
 
   app.get('/v1/public/playerboard/:orgSlug/:teamSlug/ranking', async (request, reply) => {

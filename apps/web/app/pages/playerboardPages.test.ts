@@ -36,6 +36,31 @@ describe('PlayerBoard-Seiten', () => {
     expect(consents.indexOf('if (!isLatest()) return')).toBeLessThan(consents.indexOf('playersWithoutConsent.value = roster'))
   })
 
+  it('bietet fuer gespeicherte Trainings einen konfigurierbaren anonymen Public-Link an', () => {
+    const page = read('playerboard/trainings/index.vue')
+    const settings = read('playerboard/einstellungen.vue')
+
+    expect(page).toContain('publicTrainingsEnabled === true')
+    expect(page).toContain('url.searchParams.set(\'training\', training.id)')
+    expect(page).toContain('training.status !== \'saved\'')
+    expect(page).toContain('navigator.clipboard.writeText(url)')
+    expect(page).toContain('Der öffentliche Link konnte nicht in die Zwischenablage kopiert werden.')
+    expect(settings).toContain('draft.publicTrainingsEnabled === true')
+    expect(settings).toContain('draft.publicVeoStatsEnabled === true')
+  })
+
+  it('zeigt öffentliche Trainings über die anonymisierte Vertragsgrenze', () => {
+    const page = read('mannschaft/[orgSlug]/[teamSlug].vue')
+
+    expect(page).toContain('team.tabs.trainings')
+    expect(page).toContain('PublicPlayerboardTrainingSchema')
+    expect(page).toContain('PublicPlayerboardVeoMatchSchema')
+    expect(page).not.toContain('playerId')
+    expect(page).not.toContain('matchedManually')
+    expect(page).not.toContain('publicTraining.playerId')
+    expect(page).not.toContain('publicTraining.directoryPersonId')
+  })
+
   it('zeigt unter "Saison" ohne Saisonanfang die Meldung statt der zuletzt geladenen Rangliste', () => {
     const page = read('playerboard/rangliste.vue')
 

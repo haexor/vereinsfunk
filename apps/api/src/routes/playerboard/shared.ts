@@ -134,7 +134,7 @@ export function sendDatabaseError(
   return false
 }
 
-export const SETTINGS_COLUMNS = 'scope, department_id, team_id, season_start, stats_visibility, overridable_fields, team_categories_allowed, public_sharing_allowed, public_points_enabled, public_veo_stats_enabled, public_photos_enabled, public_slug'
+export const SETTINGS_COLUMNS = 'scope, department_id, team_id, season_start, stats_visibility, overridable_fields, team_categories_allowed, public_sharing_allowed, public_trainings_enabled, public_points_enabled, public_veo_stats_enabled, public_photos_enabled, public_slug'
 
 const PlayerboardSettingsRowSchema = z.object({
   scope: ScopeLevelSchema,
@@ -145,6 +145,7 @@ const PlayerboardSettingsRowSchema = z.object({
   overridable_fields: z.array(PlayerboardOverridableFieldSchema),
   team_categories_allowed: z.boolean().nullable(),
   public_sharing_allowed: z.boolean().nullable(),
+  public_trainings_enabled: z.boolean().nullable(),
   public_points_enabled: z.boolean().nullable(),
   public_veo_stats_enabled: z.boolean().nullable(),
   public_photos_enabled: z.boolean().nullable(),

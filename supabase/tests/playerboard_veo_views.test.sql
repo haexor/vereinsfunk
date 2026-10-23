@@ -133,7 +133,12 @@ select results_eq(
 select ok(
   position('Arnold' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
     and position('fixtureId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
-    and position('playerId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0,
+    and position('playerId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
+    and position('directoryPersonId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
+    and position('matchedManually' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
+    and position('firstName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
+    and position('lastName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0
+    and position('email' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'u13')::text) = 0,
   'the public output contains no names and no ids'
 );
 
