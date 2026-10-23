@@ -82,6 +82,11 @@ export function initialPlayerKey(rows: readonly { key: string }[], preselected: 
   return rows.find((row) => row.key === preselected)?.key ?? rows[0]?.key ?? null
 }
 
+/** Erzeugt die Eintraege der gemeinsamen Spielerliste aus Spielerzeilen. */
+export function playerMapOptions(rows: readonly (Pick<VeoPlayerRow, 'key' | 'name' | 'jerseyNumber' | 'position'> & { score?: number })[]): { key: string; name: string; subtitle?: string; score?: number }[] {
+  return rows.map((row) => ({ key: row.key, name: playerRowName(row), subtitle: playerRowSubtitle(row) || undefined, score: row.score }))
+}
+
 /** "Ada Arnold" bzw. "Nummer 7" fuer nicht zugeordnete Rueckennummern. */
 export function playerRowName(row: Pick<VeoPlayerRow, 'name' | 'jerseyNumber'>): string {
   if (row.name) return row.name

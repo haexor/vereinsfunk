@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { sortPlayerRows } from '@vereinsfunk/domain'
-import { initialPlayerKey, playerRowName, type PlayerShotMarker, type VeoPlayerRow } from '../utils/playerboardVeoPlayers'
+import { initialPlayerKey, playerMapOptions, playerRowName, type PlayerShotMarker, type VeoPlayerRow } from '../utils/playerboardVeoPlayers'
 
 // Spec 002, PR 5: Spieler-Schusskarte ueber die gefilterten Spiele (Inventar §2.1.3): Auswahl
 // Abschluesse, Schuesse oder Tore; daneben die Spieler mit mindestens einem solchen Abschluss, nach
@@ -20,6 +20,7 @@ const listed = computed(() => sortPlayerRows(
     .map((row) => ({ ...row, values: { ...row.values, score: row.score } })),
   { column: 'score', direction: 'desc' },
 ))
+const options = computed(() => playerMapOptions(listed.value))
 const selected = ref<string | null>(null)
 watch(listed, (rows) => { if (!rows.some((row) => row.key === selected.value)) selected.value = initialPlayerKey(rows, props.preselected) }, { immediate: true })
 watch(() => props.preselected, (key) => { if (key) selected.value = initialPlayerKey(listed.value, key) })
@@ -40,7 +41,7 @@ const chipClass = (active: boolean) => ['focus-ring min-h-11 rounded-xl border p
     </div>
     <p v-if="listed.length === 0" class="text-sm text-[#6c756f]">{{ EMPTY[kind] }}</p>
     <div v-else class="grid gap-4 md:grid-cols-[14rem_minmax(0,1fr)]">
-      <PlayerboardVeoPlayerPicker v-model="selected" :rows="listed" label="Spieler mit Abschlüssen" />
+      <PlayerboardVeoMapPlayers v-model="selected" :options="options" :team-entry="false" label="Spieler mit Abschlüssen" />
       <PlayerboardVeoPlayerShotMap v-if="selectedRow" :shots="shots" :label="`Schusskarte ${playerRowName(selectedRow)}`" :with-summary="kind === 'all'" />
     </div>
   </div>
