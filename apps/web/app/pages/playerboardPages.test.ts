@@ -23,7 +23,7 @@ describe('PlayerBoard-Seiten', () => {
     expect(page).toContain('usePolling(')
     expect(page).not.toContain('setTimeout(')
     expect(page.replace(/\s+/g, ' ')).toContain('await load() watchRun()')
-    expect(page.replace(/\s+/g, ' ')).toContain('watch(teamId, async () => { resetLogin() await load() watchRun() })')
+    expect(page.replace(/\s+/g, ' ')).toContain('watch(teamId, async () => { resetLogin() await load() if (running.value) watchRun() })')
   })
 
   it('verwirft spaete Antworten frueherer Vereine bzw. Mannschaften in den Einstellungen', () => {
