@@ -57,13 +57,15 @@ function watchRun() {
 }
 
 await load()
-watchRun()
+// Ein initialer Aufruf ohne laufenden Lauf braucht keinen kurzen Queue-Poll; nach einer Aktion
+// bleibt watchRun() dagegen bewusst aktiv, damit ein neu eingereihtes Rennen sichtbar wird.
+if (running.value) watchRun()
 // Direkt load() statt des Poll-Refreshs: der wuerde einen laufenden Poll der alten Mannschaft
 // wiederverwenden, statt die neue zu laden.
 watch(teamId, async () => {
   resetLogin()
   await load()
-  watchRun()
+  if (running.value) watchRun()
 })
 
 // --- Verbinden ---------------------------------------------------------------------------------
