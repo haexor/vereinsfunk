@@ -22,7 +22,7 @@ const listed = computed(() => sortPlayerRows(
 ))
 const selected = ref<string | null>(null)
 watch(listed, (rows) => { if (!rows.some((row) => row.key === selected.value)) selected.value = initialPlayerKey(rows, props.preselected) }, { immediate: true })
-watch(() => props.preselected, (key) => { if (key && listed.value.some((row) => row.key === key)) selected.value = key })
+watch(() => props.preselected, (key) => { if (key) selected.value = initialPlayerKey(listed.value, key) })
 const selectedRow = computed(() => listed.value.find((row) => row.key === selected.value) ?? null)
 const shots = computed(() => (selectedRow.value ? (props.shotsByPlayer.get(selectedRow.value.key) ?? []).filter((shot) => matches(shot, kind.value)) : []))
 const EMPTY: Record<Kind, string> = {
