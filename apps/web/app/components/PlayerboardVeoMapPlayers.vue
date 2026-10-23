@@ -18,14 +18,15 @@ const selectId = useId()
 
 <template>
   <div v-if="!enabled"><slot /></div>
-  <div v-else class="grid gap-3 md:grid-cols-[13rem_minmax(0,1fr)] md:items-start">
-    <div>
+  <div v-else class="grid gap-3 md:grid-cols-[13rem_minmax(0,1fr)]">
+    <!-- Ab md bestimmt die Karte die Zeilenhoehe; die Liste fuellt sie aus und scrollt darin. -->
+    <div class="relative md:min-h-64">
       <label :for="selectId" class="sr-only">{{ label }}</label>
       <select :id="selectId" class="focus-ring h-11 w-full rounded-xl border border-[#dfe0d9] bg-white px-2 text-sm text-ink md:hidden" :value="selected ?? ''" @change="selected = ($event.target as HTMLSelectElement).value || null">
         <option value="">{{ teamLabel ?? 'Ganze Mannschaft' }}</option>
         <option v-for="option in options" :key="option.key" :value="option.key">{{ option.name }}<template v-if="option.score !== undefined"> ({{ option.score }})</template></option>
       </select>
-      <ul class="hidden max-h-[26rem] gap-1 overflow-y-auto pr-1 md:grid" :aria-label="label">
+      <ul class="hidden content-start gap-1 overflow-y-auto pr-1 md:absolute md:inset-0 md:grid" :aria-label="label">
         <li>
           <button type="button" :class="buttonClass(selected === null)" :aria-pressed="selected === null" @click="selected = null">
             <span class="font-semibold">{{ teamLabel ?? 'Ganze Mannschaft' }}</span>
