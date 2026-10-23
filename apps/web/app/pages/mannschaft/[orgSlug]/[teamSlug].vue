@@ -1,12 +1,17 @@
 <script setup lang="ts">
-import { AlertTriangle, Camera, Goal, LoaderCircle, Trophy } from '@lucide/vue'
+import { AlertTriangle, Camera, ClipboardList, Goal, LoaderCircle, Trophy } from '@lucide/vue'
 import {
   PublicPlayerboardPhotoSchema,
   PublicPlayerboardRankingEntrySchema,
   PublicPlayerboardTeamSchema,
+  PublicPlayerboardTrainingSchema,
+  PublicPlayerboardTrainingSummarySchema,
   PublicPlayerboardVeoMatchSchema,
+  UuidSchema,
   type PublicPlayerboardPhoto,
   type PublicPlayerboardTeam,
+  type PublicPlayerboardTraining,
+  type PublicPlayerboardTrainingSummary,
   type PublicPlayerboardVeoMatch,
 } from '@vereinsfunk/contracts'
 import type { VeoCardMatch } from '../../../components/PlayerboardVeoMatchCard.vue'
@@ -19,6 +24,8 @@ import { deriveSidebarPalette } from '../../../utils/sidebarBrand'
 // Paket 052, PR 4: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum,
 // Paket 020). Spieler erscheinen nur als "#7 M. K." -- die Bezeichnung bildet die Datenbank, die
 // Seite bekommt nie Namen. Fotos nur nach bestandener Einzelbild-Pruefung, als kurzlebige Links.
+// Öffentliche Trainings nutzen dieselbe Grenze: Datum, Kategorie, Wert und anonymes Label; freie
+// Titel, Notizen und interne Personenfelder bleiben vollständig intern.
 // Anders als das Impressum mit noindex: in Jugendmannschaften sind die Spieler Kinder.
 definePageMeta({ layout: 'auth' })
 
@@ -43,22 +50,54 @@ const {
   return api.request(basePath, { authenticate: false }, PublicPlayerboardTeamSchema)
 })
 
-type PublicTab = 'ranking' | 'veo' | 'photos'
+const selectedTrainingId = computed(() => {
+  const value = route.query.training
+  return typeof value === 'string' && UuidSchema.safeParse(value).success ? value : null
+})
+
+type PublicTab = 'ranking' | 'trainings' | 'veo' | 'photos'
 const tabItems = computed(() => {
   if (!team.value) return []
   return [
     { key: 'ranking' as const, label: 'Rangliste', icon: Trophy, enabled: team.value.tabs.points },
+    { key: 'trainings' as const, label: 'Trainings', icon: ClipboardList, enabled: team.value.tabs.trainings },
     { key: 'veo' as const, label: 'Spiele', icon: Goal, enabled: team.value.tabs.veoStats },
     { key: 'photos' as const, label: 'Fotos', icon: Camera, enabled: team.value.tabs.photos },
   ].filter((item) => item.enabled)
 })
-const tab = ref<PublicTab>('ranking')
+const tab = ref<PublicTab>(selectedTrainingId.value ? 'trainings' : 'ranking')
 watch(
   tabItems,
   (items) => {
     if (items.length && !items.some((item) => item.key === tab.value)) tab.value = items[0]!.key
   },
   { immediate: true },
+)
+
+const {
+  data: publicTrainings,
+  pending: publicTrainingsPending,
+  error: publicTrainingsError,
+} = await useAsyncData<PublicPlayerboardTrainingSummary[]>(
+  `public-team-trainings-${orgSlug}-${teamSlug}`,
+  async () => {
+    if (!team.value?.tabs.trainings) return []
+    return api.request(`${basePath}/trainings`, { authenticate: false }, PublicPlayerboardTrainingSummarySchema.array())
+  },
+  { watch: [team] },
+)
+
+const {
+  data: publicTraining,
+  pending: publicTrainingPending,
+  error: publicTrainingError,
+} = await useAsyncData<PublicPlayerboardTraining | null>(
+  `public-team-training-${orgSlug}-${teamSlug}`,
+  async () => {
+    if (!selectedTrainingId.value || !team.value?.tabs.trainings) return null
+    return api.request(`${basePath}/trainings/${selectedTrainingId.value}`, { authenticate: false }, PublicPlayerboardTrainingSchema)
+  },
+  { watch: [team, selectedTrainingId] },
 )
 
 const {
@@ -266,6 +305,51 @@ useHead({
           :items="ranking ?? []"
           empty-text="In dieser Saison gibt es noch keine Punkte."
         />
+      </section>
+
+      <section
+        v-if="tab === 'trainings' && team.tabs.trainings"
+        id="public-team-panel-trainings"
+        role="tabpanel"
+        aria-labelledby="public-team-tab-trainings"
+        class="space-y-4"
+      >
+        <template v-if="selectedTrainingId">
+          <NuxtLink :to="{ query: {} }" class="focus-ring inline-flex min-h-11 items-center rounded-xl text-xs font-semibold text-[#6c756f]">
+            ← Alle Trainings
+          </NuxtLink>
+          <p v-if="publicTrainingPending" class="text-xs text-[#7b827d]">Wird geladen …</p>
+          <p v-else-if="publicTrainingError || !publicTraining" class="text-sm text-amber-800">Dieses Training ist nicht öffentlich verfügbar.</p>
+          <article v-else class="card p-5">
+            <p class="text-xs text-[#6c756f]">{{ formatDate(publicTraining.trainingDate) }}</p>
+            <h2 class="mt-1 font-display text-xl font-extrabold tracking-[-.03em] text-ink">Training</h2>
+            <p v-if="publicTraining.entries.length === 0" class="mt-4 text-sm text-[#6c756f]">Für dieses Training wurden keine Punkte erfasst.</p>
+            <ul v-else class="mt-4 divide-y divide-[#ecece5]">
+              <li v-for="(entry, index) in publicTraining.entries" :key="`${entry.label}-${entry.category}-${index}`" class="flex items-center justify-between gap-3 py-3 text-sm">
+                <span class="min-w-0">
+                  <span class="block font-semibold text-ink">{{ entry.label }}</span>
+                  <span class="block text-xs text-[#6c756f]">{{ entry.category }}</span>
+                </span>
+                <span class="shrink-0 font-bold text-forest">{{ entry.value }}</span>
+              </li>
+            </ul>
+          </article>
+        </template>
+        <template v-else>
+          <p v-if="publicTrainingsPending" class="text-xs text-[#7b827d]">Wird geladen …</p>
+          <p v-else-if="publicTrainingsError" class="text-sm text-amber-800">Die Trainings konnten nicht geladen werden.</p>
+          <p v-else-if="!publicTrainings?.length" class="text-sm text-[#6c756f]">Noch keine öffentlichen Trainings.</p>
+          <ul v-else class="card divide-y divide-[#ecece5]">
+            <li v-for="training in publicTrainings" :key="training.id">
+              <NuxtLink :to="{ query: { training: training.id } }" class="focus-ring flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-[#f6f8f3]">
+                <span class="min-w-0 flex-1">
+                  <span class="block text-sm font-semibold text-ink">{{ formatDate(training.trainingDate) }}</span>
+                </span>
+                <span class="text-xs font-semibold text-forest">Ansehen →</span>
+              </NuxtLink>
+            </li>
+          </ul>
+        </template>
       </section>
 
       <section

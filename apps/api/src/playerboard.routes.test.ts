@@ -296,7 +296,7 @@ describe('PlayerBoard coach flows', () => {
     const SETTINGS_ID = '52000000-8000-4000-8000-000000000001'
     const teamSettings = {
       scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [],
-      team_categories_allowed: null, public_sharing_allowed: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13',
+      team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13',
     }
 
     /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
@@ -389,7 +389,7 @@ describe('PlayerBoard coach flows', () => {
   })
 
   it('returns the share path of a team with a public slug', async () => {
-    const empty = { public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null }
+    const empty = { public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null }
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
       supabaseClients: clients({
@@ -420,8 +420,8 @@ describe('PlayerBoard public team page', () => {
       serviceTables: {
         organizations: { id: ORGANIZATION_ID, timezone: 'Europe/Berlin' },
         playerboard_settings: [
-          { scope: 'organization', department_id: null, team_id: null, season_start: '2024-08-01', stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null },
-          { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_points_enabled: true, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13' },
+          { scope: 'organization', department_id: null, team_id: null, season_start: '2024-08-01', stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null },
+          { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: true, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13' },
         ],
         organization_brand_profiles: { primary_color: '#0b3d91', accent_color: '#ffcc00', allow_department_overrides: true, locked_fields: [] },
         department_brand_profiles: null,
@@ -443,12 +443,12 @@ describe('PlayerBoard public team page', () => {
   })
 
   it('serves the ranking with labels only and hides switched-off tabs', async () => {
-    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: true, veo_stats_enabled: false, photos_enabled: false }]
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: true, trainings_enabled: false, veo_stats_enabled: false, photos_enabled: false }]
     const app = await startApp({ supabaseClients: publicClients(info, {
       playerboard_public_ranking: { data: [{ rank: '1', label: '#7 M. K.', total: '5', category_totals: [{ category: 'Fairness', points: 5 }] }], error: null },
     }) })
     const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
-    expect(team.json()).toMatchObject({ organizationName: 'SV Nordstadt', teamName: 'U13', tabs: { points: true, veoStats: false, photos: false }, brand: { primaryColor: '#0b3d91', accentColor: '#ffcc00' } })
+    expect(team.json()).toMatchObject({ organizationName: 'SV Nordstadt', teamName: 'U13', tabs: { points: true, trainings: false, veoStats: false, photos: false }, brand: { primaryColor: '#0b3d91', accentColor: '#ffcc00' } })
     // Saisonbeginn des Vereins (1. August) als Anfang der laufenden Saison.
     expect(team.json().seasonFrom).toMatch(/^\d{4}-08-01$/)
     const ranking = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/ranking' })
@@ -457,10 +457,12 @@ describe('PlayerBoard public team page', () => {
     expect(photos.statusCode).toBe(404)
     const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
     expect(veo.statusCode).toBe(404)
+    const trainings = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/trainings' })
+    expect(trainings.statusCode).toBe(404)
   })
 
   it('serves Veo matches with labels and the club timezone when the tab is on', async () => {
-    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, veo_stats_enabled: true, photos_enabled: false }]
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: false, veo_stats_enabled: true, photos_enabled: false }]
     const match = {
       kickoffAt: '2026-09-05T10:00:00+00:00', opponentName: 'Gegner', isHome: false, ownScore: 1, opponentScore: 3,
       teamStats: [{ teamAssociation: 'own', statType: 'football_shots_total', category: 'attacking', value: 9 }],
@@ -468,9 +470,31 @@ describe('PlayerBoard public team page', () => {
     }
     const app = await startApp({ supabaseClients: publicClients(info, { playerboard_public_veo_stats: { data: [match], error: null } }) })
     const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
-    expect(team.json()).toMatchObject({ tabs: { points: false, veoStats: true, photos: false }, timezone: 'Europe/Berlin' })
+    expect(team.json()).toMatchObject({ tabs: { points: false, trainings: false, veoStats: true, photos: false }, timezone: 'Europe/Berlin' })
     const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
     expect(veo.statusCode).toBe(200)
     expect(veo.json()).toEqual([match])
+    expect(JSON.stringify(veo.json())).not.toMatch(/playerId|directoryPersonId|matchedManually|firstName|lastName|email/)
+  })
+
+  it('serves saved trainings with anonymous labels and no person fields', async () => {
+    const trainingId = '52000000-5000-4000-8000-000000000001'
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: true, veo_stats_enabled: false, photos_enabled: false }]
+    const detail = {
+      trainingDate: '2026-10-22',
+      entries: [{ label: '#7 M. K.', category: 'Fairness', value: 5 }],
+    }
+    const app = await startApp({ supabaseClients: publicClients(info, {
+      playerboard_public_trainings: { data: [{ training_id: trainingId, training_date: '2026-10-22' }], error: null },
+      playerboard_public_training: { data: detail, error: null },
+    }) })
+    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    expect(team.json()).toMatchObject({ tabs: { points: false, trainings: true, veoStats: false, photos: false } })
+    const list = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/trainings' })
+    expect(list.json()).toEqual([{ id: trainingId, trainingDate: '2026-10-22' }])
+    const selected = await app.inject({ method: 'GET', url: `/v1/public/playerboard/sv-nordstadt/u13/trainings/${trainingId}` })
+    expect(selected.json()).toEqual(detail)
+    expect(JSON.stringify(selected.json())).not.toMatch(/playerId|directoryPersonId|profileId|email|firstName|lastName|name/)
+    expect(JSON.stringify(selected.json())).toContain('#7 M. K.')
   })
 })

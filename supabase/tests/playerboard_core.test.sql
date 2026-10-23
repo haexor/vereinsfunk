@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(70);
+select plan(78);
 
 set local role postgres;
 
@@ -51,7 +51,8 @@ insert into public.playerboard_point_categories (id, organization_id, scope, dep
   ('52000000-4000-4000-8000-000000000003', '52000000-1000-4000-8000-000000000001', 'department', '52000000-1100-4000-8000-00000000000b', null, 'Wurfquote', 0, 10);
 insert into public.playerboard_trainings (id, organization_id, department_id, team_id, training_date, title, status) values
   ('52000000-5000-4000-8000-000000000001', '52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', current_date - 1, 'Dienstag', 'saved'),
-  ('52000000-5000-4000-8000-000000000002', '52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', current_date - 1, 'Entwurf', 'draft');
+  ('52000000-5000-4000-8000-000000000002', '52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a1', current_date - 1, 'Entwurf', 'draft'),
+  ('52000000-5000-4000-8000-000000000003', '52000000-1000-4000-8000-000000000001', '52000000-1100-4000-8000-00000000000a', '52000000-1200-4000-8000-0000000000a2', current_date - 1, 'U15', 'saved');
 insert into public.playerboard_training_notes (organization_id, training_id, note) values
   ('52000000-1000-4000-8000-000000000001', '52000000-5000-4000-8000-000000000001', 'Mia war krank');
 insert into public.playerboard_point_entries (organization_id, training_id, player_id, category_id, value) values
@@ -303,11 +304,53 @@ select is((select count(*)::integer from public.playerboard_public_team_info('pg
   'without a public slug there is no public team page');
 
 set local role postgres;
-update public.playerboard_settings set public_slug = 'u13', public_points_enabled = true
+update public.playerboard_settings set public_slug = 'u13', public_points_enabled = true, public_trainings_enabled = true
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 set local role service_role;
 
--- 46-49: Rangliste nur mit Rueckennummer und Initialen.
+-- 46-52: oeffentliche Trainings sind separat schaltbar und liefern nur anonyme Zeilen.
+select is((select trainings_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'u13')), true,
+  'the public team metadata exposes the independent training switch');
+select results_eq(
+  $$select training_id, training_date from public.playerboard_public_trainings('pgtap-playerboard', 'u13')$$,
+  $$select '52000000-5000-4000-8000-000000000001'::uuid, current_date - 1$$,
+  'the public training list contains saved trainings only'
+);
+select is(
+  (select public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001')->'entries'->0->>'label'),
+  '#7 M. K.', 'the public training detail uses jersey number and initials'
+);
+select ok(
+  position('Mia' in public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('Keller' in public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('directoryPersonId' in public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('52000000-3000-' in public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0,
+  'the public training detail contains no names or player identifiers'
+);
+select is(
+  public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000002'),
+  null::jsonb, 'draft trainings are never publicly readable'
+);
+select is(
+  public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000003'),
+  null::jsonb, 'a training from another team is never publicly readable through this team slug'
+);
+set local role postgres;
+update public.playerboard_settings set public_trainings_enabled = false
+ where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
+set local role service_role;
+select is((select count(*)::integer from public.playerboard_public_trainings('pgtap-playerboard', 'u13')), 0,
+  'disabling public trainings removes the public list');
+select is(
+  public.playerboard_public_training('pgtap-playerboard', 'u13', '52000000-5000-4000-8000-000000000001'),
+  null::jsonb, 'disabling public trainings closes existing share links'
+);
+set local role postgres;
+update public.playerboard_settings set public_trainings_enabled = true
+ where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
+set local role service_role;
+
+-- 53-56: Rangliste nur mit Rueckennummer und Initialen.
 select results_eq(
   $$select rank, label, total from public.playerboard_public_ranking('pgtap-playerboard', 'u13')$$,
   $$values (1::bigint, '#7 M. K.'::text, 5::bigint), (2::bigint, 'J. A.'::text, 3::bigint)$$,
@@ -325,7 +368,7 @@ select is(
 select is((select photos_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'u13')), false,
   'public photos stay off until the coach enables them');
 
--- 50-51: public_sharing_allowed = false oder Modul aus schliesst die Seite.
+-- 57-58: public_sharing_allowed = false oder Modul aus schliesst die Seite.
 set local role postgres;
 update public.playerboard_settings set public_sharing_allowed = false
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'department';
@@ -342,7 +385,7 @@ select is((select count(*)::integer from public.playerboard_public_ranking('pgta
 set local role postgres;
 update public.policy_settings set enabled_modules = null where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 
--- 52-53: weder anon noch angemeldete Nutzer rufen die oeffentlichen Funktionen direkt auf.
+-- 59-60: weder anon noch angemeldete Nutzer rufen die oeffentlichen Funktionen direkt auf.
 set local role anon;
 select throws_ok($$select * from public.playerboard_public_ranking('pgtap-playerboard', 'u13')$$, '42501', null,
   'anon cannot execute the public ranking function');
