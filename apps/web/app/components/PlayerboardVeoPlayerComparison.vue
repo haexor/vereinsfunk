@@ -53,7 +53,8 @@ function pick(side: 'a' | 'b', key: string) {
   } else {
     manualPicks.value = next
   }
-  if (manualPicks.value.a && manualPicks.value.b) writeComparisonPlayers(storageKey.value, manualPicks.value)
+  const manual = manualPicks.value
+  if (manual.a && manual.b) writeComparisonPlayers(storageKey.value, { a: manual.a, b: manual.b })
 }
 
 const playerA = computed(() => listed.value.find((row) => row.key === picks.value.a) ?? null)
