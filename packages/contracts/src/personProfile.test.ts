@@ -7,7 +7,7 @@ const PLAYER_ID = '58000000-3000-4000-8000-000000000001'
 
 const team = {
   teamId: TEAM_ID, teamName: 'U13', playerId: PLAYER_ID, jerseyNumber: 7, position: 'Sturm', active: true, isSelf: false,
-  rank: 1, total: 12, categories: [{ name: 'Einsatz', points: 12 }],
+  rank: 1, total: 12, categories: [{ name: 'Einsatz', points: 12 }], veoMatches: [],
 }
 
 describe('person profile contract', () => {
@@ -15,6 +15,7 @@ describe('person profile contract', () => {
     const parsed = PersonProfileSchema.parse({ id: PERSON_ID, firstName: 'Ada', lastName: 'Arnold', status: 'active', teams: [team] })
     expect('email' in parsed).toBe(false)
     expect('hasAccount' in parsed).toBe(false)
+    expect(parsed.teams[0]?.veoMatches).toEqual([])
   })
 
   it('accepts a profile for a person without any squad entry', () => {

@@ -26,6 +26,13 @@ const ProfileRowSchema = z.object({
     rank: z.number().nullable(),
     total: z.number(),
     categoryTotals: z.record(z.string(), z.number()),
+    veoMatches: z.array(z.object({
+      fixtureId: UuidSchema,
+      kickoffAt: z.string(),
+      opponentName: z.string().nullable(),
+      jerseyNumber: z.number().int().nonnegative(),
+      stats: z.record(z.string().min(1), z.number()),
+    })),
   })),
 })
 
@@ -101,6 +108,7 @@ export function registerPersonProfileRoutes(app: FastifyInstance, context: ApiRo
           .flatMap(([id, points]) => { const category = names.get(id); return category ? [{ name: category.name, order: category.order, points }] : [] })
           .sort((a, b) => byOrder(a.order, b.order))
           .map(({ name, points }) => ({ name, points })),
+        veoMatches: team.veoMatches,
       })),
       ...(management ?? {}),
     }))

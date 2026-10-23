@@ -127,6 +127,7 @@ function toggleTeam(teamId: string) {
                 </div>
               </dl>
             </template>
+            <PlayerboardPersonVeoStats :matches="team.veoMatches" />
           </li>
         </ul>
       </section>

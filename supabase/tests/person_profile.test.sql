@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(31);
+select plan(34);
 
 set local role postgres;
 
@@ -58,6 +58,21 @@ insert into public.playerboard_point_entries (organization_id, training_id, play
 -- Saisonbeginn vor 30 Tagen: das gestrige Training zaehlt zur laufenden Saison, das alte nicht.
 insert into public.playerboard_settings (organization_id, scope, season_start, updated_by) values
   ('58000000-1000-4000-8000-000000000001', 'organization', current_date - 30, '58000000-0000-4000-8000-000000000001');
+
+-- Zwei abgeglichene Veo-Spiele fuer Mia: eines in der laufenden Saison, eines davor.
+insert into public.fixtures (id, organization_id, department_id, team_id, kind, is_home, opponent_name, kickoff_at, status, home_score, away_score) values
+  ('58000000-6000-4000-8000-000000000001', '58000000-1000-4000-8000-000000000001', '58000000-1100-4000-8000-00000000000a', '58000000-1200-4000-8000-0000000000a1', 'match', true, 'FC Veo aktuell', (current_date - 1 + time '18:00') at time zone 'Europe/Berlin', 'played', 2, 1),
+  ('58000000-6000-4000-8000-000000000002', '58000000-1000-4000-8000-000000000001', '58000000-1100-4000-8000-00000000000a', '58000000-1200-4000-8000-0000000000a1', 'match', true, 'FC Veo alt', (current_date - 400 + time '18:00') at time zone 'Europe/Berlin', 'played', 3, 1);
+insert into public.playerboard_veo_matches (fixture_id, organization_id, team_id, veo_match_id, veo_team_id) values
+  ('58000000-6000-4000-8000-000000000001', '58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', 'veo-profile-current', 'veo-team-a1'),
+  ('58000000-6000-4000-8000-000000000002', '58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', 'veo-profile-old', 'veo-team-a1');
+insert into public.playerboard_veo_player_assignments (id, organization_id, team_id, fixture_id, veo_jersey_number, player_id) values
+  ('58000000-7000-4000-8000-000000000001', '58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', '58000000-6000-4000-8000-000000000001', 7, '58000000-3000-4000-8000-000000000001'),
+  ('58000000-7000-4000-8000-000000000002', '58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', '58000000-6000-4000-8000-000000000002', 7, '58000000-3000-4000-8000-000000000001');
+insert into public.playerboard_veo_player_stats (organization_id, team_id, fixture_id, assignment_id, stat_type, category, value) values
+  ('58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', '58000000-6000-4000-8000-000000000001', '58000000-7000-4000-8000-000000000001', 'football_goal_total', 'attacking', 2),
+  ('58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', '58000000-6000-4000-8000-000000000001', '58000000-7000-4000-8000-000000000001', 'seconds_played_total', 'physical', 3600),
+  ('58000000-1000-4000-8000-000000000001', '58000000-1200-4000-8000-0000000000a1', '58000000-6000-4000-8000-000000000002', '58000000-7000-4000-8000-000000000002', 'football_goal_total', 'attacking', 3);
 
 -- dieselben Faelle wie currentSeasonStart in packages/domain/src/playerboard.test.ts.
 select is(authz.current_season_start('2026-07-01', '2026-10-08'), '2026-07-01'::date, 'season start earlier this year is the current season');
@@ -135,6 +150,9 @@ select results_eq(
 -- Platz wie in der Rangliste (Mia 9 vor Jonas 3).
 select is((select t->>'rank' from jsonb_array_elements(public.person_profile('58000000-2000-4000-8000-000000000001', 'all')->'teams') t where t->>'teamId' = '58000000-1200-4000-8000-0000000000a1'),
   '1', 'the rank equals the place in the team ranking');
+select is(jsonb_array_length((select t->'veoMatches' from jsonb_array_elements(public.person_profile('58000000-2000-4000-8000-000000000001', 'season')->'teams') t where t->>'teamId' = '58000000-1200-4000-8000-0000000000a1')), 1, 'the profile contains only current-season Veo matches');
+select is((select t->'veoMatches'->0->'stats'->>'football_goal_total' from jsonb_array_elements(public.person_profile('58000000-2000-4000-8000-000000000001', 'season')->'teams') t where t->>'teamId' = '58000000-1200-4000-8000-0000000000a1'), '2', 'the profile contains the assigned player Veo stats');
+select is(jsonb_array_length((select t->'veoMatches' from jsonb_array_elements(public.person_profile('58000000-2000-4000-8000-000000000001', 'all')->'teams') t where t->>'teamId' = '58000000-1200-4000-8000-0000000000a1')), 2, 'the whole-period profile contains all assigned Veo matches');
 -- ungueltiger Zeitraum.
 select throws_ok($$select public.person_profile('58000000-2000-4000-8000-000000000001', 'foo')$$, 'P0001', 'invalid_period', 'an unknown period is rejected');
 

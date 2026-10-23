@@ -14,6 +14,15 @@ export const PersonProfileQuerySchema = z.object({
   period: PersonProfilePeriodSchema.default('season'),
 })
 
+export const PersonProfileVeoMatchSchema = z.object({
+  fixtureId: UuidSchema,
+  kickoffAt: z.string(),
+  opponentName: z.string().nullable(),
+  jerseyNumber: z.int().nonnegative(),
+  // Rohwerte je Spiel; die Web-App berechnet daraus dieselben Saisonkennzahlen wie Veo.
+  stats: z.record(z.string().min(1), z.number()),
+})
+
 export const PersonProfileTeamSchema = z.object({
   teamId: UuidSchema,
   teamName: z.string(),
@@ -28,6 +37,8 @@ export const PersonProfileTeamSchema = z.object({
   total: z.int(),
   // In der Reihenfolge der Mannschaft; nur Kategorien mit Punkten im Zeitraum.
   categories: z.array(z.object({ name: z.string(), points: z.int() })),
+  // Nur Veo-Spiele, in denen die Person dieser Rueckennummer zugeordnet ist und Werte vorliegen.
+  veoMatches: z.array(PersonProfileVeoMatchSchema),
 })
 
 export const PersonProfileSchema = z.object({
@@ -43,5 +54,6 @@ export const PersonProfileSchema = z.object({
 })
 
 export type PersonProfilePeriod = z.infer<typeof PersonProfilePeriodSchema>
+export type PersonProfileVeoMatch = z.infer<typeof PersonProfileVeoMatchSchema>
 export type PersonProfileTeam = z.infer<typeof PersonProfileTeamSchema>
 export type PersonProfile = z.infer<typeof PersonProfileSchema>

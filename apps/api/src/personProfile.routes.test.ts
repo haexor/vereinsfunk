@@ -20,6 +20,7 @@ const profileRow = {
   teams: [{
     teamId: TEAM_ID, teamName: 'U13', playerId: PLAYER_ID, jerseyNumber: 7, position: 'Sturm', active: true, isSelf: false,
     rank: 1, total: 9, categoryTotals: { [TORE_ID]: 4, [FAIRNESS_ID]: 5 },
+    veoMatches: [],
   }],
 }
 
@@ -82,8 +83,18 @@ describe('GET /v1/people/:id/profile', () => {
         rank: 1, total: 9,
         // Vereinsweite Kategorien vor Mannschaftskategorien, wie in der Rangliste.
         categories: [{ name: 'Fairness', points: 5 }, { name: 'Tore', points: 4 }],
+        veoMatches: [],
       }],
     })
+  })
+
+  it('passes through the player\'s Veo matches for the visible team', async () => {
+    const veoMatches = [{
+      fixtureId: '58000000-5000-4000-8000-000000000001', kickoffAt: '2026-10-20T18:00:00.000Z', opponentName: 'FC Beispiel',
+      jerseyNumber: 7, stats: { football_goal_total: 2, seconds_played_total: 3600 },
+    }]
+    const app = await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: clients({ profile: { ...profileRow, teams: [{ ...profileRow.teams[0], veoMatches }] } }) })
+    expect((await get(app, `/v1/people/${PERSON_ID}/profile`)).json().teams[0].veoMatches).toEqual(veoMatches)
   })
 
   it('does not let personal data be cached', async () => {
