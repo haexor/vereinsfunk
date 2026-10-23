@@ -16,7 +16,7 @@ const listed = computed(() => sortPlayerRows(props.rows, DEFAULT_PLAYER_SORT))
 const options = computed(() => playerMapOptions(listed.value))
 const selected = ref<string | null>(null)
 watch(listed, (rows) => { if (!rows.some((row) => row.key === selected.value)) selected.value = initialPlayerKey(rows, props.preselected) }, { immediate: true })
-watch(() => props.preselected, (key) => { if (key && listed.value.some((row) => row.key === key)) selected.value = key })
+watch(() => props.preselected, (key) => { if (key) selected.value = initialPlayerKey(listed.value, key) })
 const selectedRow = computed(() => listed.value.find((row) => row.key === selected.value) ?? null)
 </script>
 

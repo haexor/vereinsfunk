@@ -18,12 +18,20 @@ const props = defineProps<{
 const listed = computed(() => sortPlayerRows(props.rows, DEFAULT_PLAYER_SORT))
 const storageKey = computed(() => `vereinsfunk.veo.comparison-players.${props.teamId}`)
 const picks = ref<{ a: string | null; b: string | null }>({ a: null, b: null })
+const manualPicks = ref<{ a: string | null; b: string | null }>({ a: null, b: null })
 function resetPicks() {
   const stored = readComparisonPlayers(storageKey.value)
   const has = (key: string | null | undefined) => Boolean(key && listed.value.some((row) => row.key === key))
+  manualPicks.value = {
+    a: has(stored?.a) ? stored!.a : null,
+    b: has(stored?.b) ? stored!.b : null,
+  }
+  const storedA = manualPicks.value.a ?? listed.value[0]?.key ?? null
+  const storedB = manualPicks.value.b ?? listed.value.find((row) => row.key !== storedA)?.key ?? null
+  const preselected = has(props.preselected) ? props.preselected! : null
   picks.value = {
-    a: has(stored?.a) ? stored!.a : listed.value[0]?.key ?? null,
-    b: has(stored?.b) ? stored!.b : listed.value[1]?.key ?? null,
+    a: preselected ?? storedA,
+    b: preselected && storedB === preselected ? storedA : storedB,
   }
 }
 onMounted(resetPicks)
@@ -34,8 +42,19 @@ watch(() => props.preselected, (key) => {
   picks.value = { a: key, b: picks.value.b === key ? picks.value.a : picks.value.b }
 })
 function pick(side: 'a' | 'b', key: string) {
-  picks.value = { ...picks.value, [side]: key }
-  if (picks.value.a && picks.value.b) writeComparisonPlayers(storageKey.value, { a: picks.value.a, b: picks.value.b })
+  const next = { ...picks.value, [side]: key }
+  picks.value = next
+  if (!next.a || !next.b) return
+  if (side === 'b' && props.preselected === next.a) {
+    const a = manualPicks.value.a && manualPicks.value.a !== next.b
+      ? manualPicks.value.a
+      : listed.value.find((row) => row.key !== next.b)?.key ?? null
+    manualPicks.value = { a, b: next.b }
+  } else {
+    manualPicks.value = next
+  }
+  const manual = manualPicks.value
+  if (manual.a && manual.b) writeComparisonPlayers(storageKey.value, { a: manual.a, b: manual.b })
 }
 
 const playerA = computed(() => listed.value.find((row) => row.key === picks.value.a) ?? null)
