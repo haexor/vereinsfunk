@@ -78,6 +78,12 @@ export interface PlayerShotMarker {
 }
 
 /** "Ada Arnold" bzw. "Nummer 7" fuer nicht zugeordnete Rueckennummern. */
+// Auswahl einer Spielerliste: die Vorauswahl der Seite (Rangliste/Spielertabelle), wenn der Spieler in
+// der Liste steht, sonst der erste. Die Karte darf danach frei einen anderen Spieler waehlen.
+export function initialPlayerKey(rows: readonly { key: string }[], preselected: string | null | undefined): string | null {
+  return rows.find((row) => row.key === preselected)?.key ?? rows[0]?.key ?? null
+}
+
 export function playerRowName(row: Pick<VeoPlayerRow, 'name' | 'jerseyNumber'>): string {
   if (row.name) return row.name
   return row.jerseyNumber === null ? 'Unbekannter Spieler' : `Nummer ${row.jerseyNumber}`

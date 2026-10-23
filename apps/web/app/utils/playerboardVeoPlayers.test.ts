@@ -2,6 +2,7 @@ import { DEFAULT_LEADERBOARD_METRICS, DEFAULT_MATCH_PLAYER_COLUMNS, seasonPlayer
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   formatPlayerMetric,
+  initialPlayerKey,
   matchPlayerRows,
   playerMetricHeader,
   playerRowName,
@@ -118,4 +119,15 @@ describe('Veo Analytics players', () => {
     store.set('pair', '{"a": 1}')
     expect(readComparisonPlayers('pair')).toBeNull()
   })
+})
+
+describe('initialPlayerKey', () => {
+  const rows = [{ key: 'a' }, { key: 'b' }]
+  it('prefers the preselected player when listed', () => expect(initialPlayerKey(rows, 'b')).toBe('b'))
+  it('falls back to the first player when the preselection is not listed or missing', () => {
+    expect(initialPlayerKey(rows, 'x')).toBe('a')
+    expect(initialPlayerKey(rows, null)).toBe('a')
+    expect(initialPlayerKey(rows, undefined)).toBe('a')
+  })
+  it('has no player for an empty list', () => expect(initialPlayerKey([], 'a')).toBeNull())
 })

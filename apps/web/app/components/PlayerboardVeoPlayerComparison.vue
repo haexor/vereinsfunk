@@ -5,10 +5,12 @@ import { formatPlayerMetric, playerRowName, readComparisonPlayers, writeComparis
 
 // Spec 002, PR 5: Spielervergleich wie Veo (Inventar §2.1.5): zwei Spieler nebeneinander, Werte in
 // Veos Gruppen, der hoehere Wert hervorgehoben; darunter Heatmaps und Schusskarten. Die Wahl liegt je
-// Mannschaft im Browser.
+// Mannschaft im Browser. Waehlt die Seite einen Spieler vor (Rangliste, Spielertabelle), steht er als
+// Spieler A; die Vorauswahl wird nicht gespeichert.
 const props = defineProps<{
   teamId: string
   rows: readonly VeoPlayerRow[]
+  preselected?: string | null
   shotsByPlayer: ReadonlyMap<string, readonly PlayerShotMarker[]>
   heatmapOf: (player: { key: string; playerId: string | null; jerseyNumber: number | null }) => Promise<VeoSeasonHeatmap | null>
 }>()
@@ -26,6 +28,11 @@ function resetPicks() {
 }
 onMounted(resetPicks)
 watch([listed, storageKey], resetPicks)
+watch(() => props.preselected, (key) => {
+  if (!key || !listed.value.some((row) => row.key === key) || picks.value.a === key) return
+  // Ist der Spieler schon B, tauschen die beiden, damit nie derselbe Spieler zweimal steht.
+  picks.value = { a: key, b: picks.value.b === key ? picks.value.a : picks.value.b }
+})
 function pick(side: 'a' | 'b', key: string) {
   picks.value = { ...picks.value, [side]: key }
   if (picks.value.a && picks.value.b) writeComparisonPlayers(storageKey.value, { a: picks.value.a, b: picks.value.b })
