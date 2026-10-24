@@ -48,6 +48,7 @@ describe('person profile loading', () => {
     const stats = readFileSync(join(import.meta.dirname, '../components/PlayerboardPersonVeoStats.vue'), 'utf8')
 
     expect(profilePage).toContain('<PlayerboardPersonVeoStats :team="team"')
+    expect(profilePage).toContain('<ul v-else class="grid gap-3">')
     expect(stats).toContain('<PlayerboardVeoPlayerStatsTable')
     expect(stats).toContain('<PlayerboardVeoPlayerSeasonHeatmap')
     expect(stats).toContain('<PlayerboardVeoPlayerShotMap')
