@@ -99,11 +99,11 @@ async function copyPublicLink(training: PlayerboardTraining) {
       <p v-else-if="errorMessage" class="text-sm text-amber-800">{{ errorMessage }}</p>
       <p v-else-if="publicSettingsError" class="mb-3 text-sm text-amber-800" role="alert">{{ publicSettingsError }}</p>
       <p v-if="copyError" class="mb-3 text-sm text-amber-800" role="alert">{{ copyError }}</p>
-      <section v-if="!loading && !errorMessage && !publicSettingsError && trainings.length === 0" class="card p-8 text-center text-sm text-[#6c756f]">
+      <section v-if="!loading && !errorMessage && trainings.length === 0" class="card p-8 text-center text-sm text-[#6c756f]">
         <ClipboardList :size="20" class="mx-auto mb-2 text-[#9aa096]" />
         Noch kein Training erfasst.
       </section>
-      <ul v-else-if="!loading && !errorMessage && !publicSettingsError" class="card divide-y divide-[#ecece5]">
+      <ul v-else-if="!loading && !errorMessage" class="card divide-y divide-[#ecece5]">
         <li v-for="training in trainings" :key="training.id">
           <div class="flex min-h-14 items-center gap-3 px-4 py-3 hover:bg-[#f6f8f3]">
             <NuxtLink :to="`/playerboard/trainings/${training.id}`" class="focus-ring flex min-w-0 flex-1 items-center gap-3">

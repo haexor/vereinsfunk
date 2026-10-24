@@ -46,7 +46,14 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     }
     const info = await supabaseClients.forService().rpc('playerboard_public_team_info', { org_slug: params.data.orgSlug, team_slug: params.data.teamSlug })
     if (info.error) throw info.error
-    const row = (info.data as { organization_name: string; team_name: string; points_enabled: boolean; trainings_enabled: boolean; veo_stats_enabled: boolean; photos_enabled: boolean }[] | null)?.[0]
+    const row = z.array(z.object({
+      organization_name: z.string(),
+      team_name: z.string(),
+      points_enabled: z.boolean(),
+      trainings_enabled: z.boolean(),
+      veo_stats_enabled: z.boolean(),
+      photos_enabled: z.boolean(),
+    })).nullable().parse(info.data)?.[0]
     if (!row) {
       reply.code(404).send({ error: 'not_found', correlationId: request.id })
       return null
