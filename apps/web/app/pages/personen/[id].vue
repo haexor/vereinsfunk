@@ -97,7 +97,7 @@ function toggleTeam(teamId: string) {
           </div>
         </div>
         <p v-if="profile.teams.length === 0" class="card p-5 text-sm text-[#6c756f]">Keine Mannschaft, deren Werte du sehen darfst.</p>
-        <ul v-else class="grid gap-3 md:grid-cols-2 xl:grid-cols-3">
+        <ul v-else class="grid gap-3">
           <li v-for="team in profile.teams" :key="team.teamId" class="card p-4" :data-testid="`profile-team-${team.teamId}`">
             <div class="flex items-center gap-3">
               <span class="grid h-10 min-w-10 shrink-0 place-items-center rounded-xl bg-[#eef1ea] px-1 text-sm font-bold text-forest" :aria-label="`Trikot ${jersey(team.jerseyNumber)}`">{{ jersey(team.jerseyNumber) }}</span>
