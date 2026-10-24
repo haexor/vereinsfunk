@@ -43,4 +43,14 @@ describe('person profile loading', () => {
     expect(profilePage).toContain('useScopedLoad(() => `${personId.value}:${period.value}`')
     expect(profilePage).toContain('if (!isLatest()) return')
   })
+
+  it('uses the existing Veo table and map components for profile statistics', () => {
+    const stats = readFileSync(join(import.meta.dirname, '../components/PlayerboardPersonVeoStats.vue'), 'utf8')
+
+    expect(profilePage).toContain('<PlayerboardPersonVeoStats :team="team"')
+    expect(stats).toContain('<PlayerboardVeoPlayerStatsTable')
+    expect(stats).toContain('<PlayerboardVeoPlayerSeasonHeatmap')
+    expect(stats).toContain('<PlayerboardVeoPlayerShotMap')
+    expect(stats).toContain('usePlayerboardVeoPlayerHeatmaps')
+  })
 })

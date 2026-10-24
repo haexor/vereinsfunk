@@ -12,6 +12,7 @@ import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 const route = useRoute()
 const router = useRouter()
 const api = useApiClient()
+const { organizationTimezone } = await useActiveScope()
 const personId = computed(() => String(route.params.id))
 
 const profile = ref<PersonProfile | null>(null)
@@ -127,7 +128,7 @@ function toggleTeam(teamId: string) {
                 </div>
               </dl>
             </template>
-            <PlayerboardPersonVeoStats :matches="team.veoMatches" />
+            <PlayerboardPersonVeoStats :team="team" :person-name="`${profile.firstName} ${profile.lastName}`" :period="period" :timezone="organizationTimezone" />
           </li>
         </ul>
       </section>
