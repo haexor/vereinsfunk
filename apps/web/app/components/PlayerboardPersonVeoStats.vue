@@ -25,7 +25,7 @@ const values = computed(() => {
       playerId: 'profile-player',
       personId: null,
       name: null,
-      stats: Object.entries(match.stats).map(([statType, value]) => ({ statType, value })),
+      stats: match.stats,
     }],
   })))[0]
   return row?.values ?? {}
