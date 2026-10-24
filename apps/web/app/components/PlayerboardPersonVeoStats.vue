@@ -60,26 +60,29 @@ const allPlayerColumns = VEO_PLAYER_METRICS.map((metric) => metric.id)
 </script>
 
 <template>
-  <section v-if="row" class="mt-4 border-t border-[#eef0ea] pt-4" aria-label="Veo-Statistiken">
+  <section class="mt-4 border-t border-[#eef0ea] pt-4" aria-label="Veo-Statistiken">
     <div class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
       <h3 class="text-[10px] font-bold uppercase tracking-[.08em] text-[#7b827d]">Veo-Statistiken und Karten</h3>
       <span class="text-[11px] text-[#6c756f]">{{ sourceLabel }}</span>
     </div>
-    <PlayerboardVeoPlayerStatsTable
-      :rows="[row]" :caption="`Alle Veo-Spielerwerte ${sourceLabel}`" storage-key="vereinsfunk.veo.profile-columns"
-      :default-columns="allPlayerColumns"
-    />
-    <p v-if="loadingMaps" class="mt-4 text-sm text-[#6c756f]" role="status">Veo-Karten werden geladen …</p>
-    <p v-else-if="mapsError" class="mt-4 text-sm text-amber-800" role="alert">{{ mapsError }}</p>
-    <div v-else class="mt-5 grid gap-5 md:grid-cols-2">
-      <section>
-        <h4 class="mb-2 text-sm font-bold text-ink">Heatmap</h4>
-        <PlayerboardVeoPlayerSeasonHeatmap :player="row" :heatmap-of="heatmapOf" :label="`Heatmap ${playerRowName(row)}`" />
-      </section>
-      <section>
-        <h4 class="mb-2 text-sm font-bold text-ink">Schusskarte</h4>
-        <PlayerboardVeoPlayerShotMap :shots="shotsByPlayer.get(row.key) ?? []" :label="`Schusskarte ${playerRowName(row)}`" />
-      </section>
-    </div>
+    <template v-if="row">
+      <PlayerboardVeoPlayerStatsTable
+        :rows="[row]" :caption="`Alle Veo-Spielerwerte ${sourceLabel}`" storage-key="vereinsfunk.veo.profile-columns"
+        :default-columns="allPlayerColumns"
+      />
+      <p v-if="loadingMaps" class="mt-4 text-sm text-[#6c756f]" role="status">Veo-Karten werden geladen …</p>
+      <p v-else-if="mapsError" class="mt-4 text-sm text-amber-800" role="alert">{{ mapsError }}</p>
+      <div v-else class="mt-5 grid gap-5 md:grid-cols-2">
+        <section>
+          <h4 class="mb-2 text-sm font-bold text-ink">Heatmap</h4>
+          <PlayerboardVeoPlayerSeasonHeatmap :player="row" :heatmap-of="heatmapOf" :label="`Heatmap ${playerRowName(row)}`" />
+        </section>
+        <section>
+          <h4 class="mb-2 text-sm font-bold text-ink">Schusskarte</h4>
+          <PlayerboardVeoPlayerShotMap :shots="shotsByPlayer.get(row.key) ?? []" :label="`Schusskarte ${playerRowName(row)}`" />
+        </section>
+      </div>
+    </template>
+    <p v-else class="text-xs text-[#6c756f]">Für diesen Zeitraum liegen keine Veo-Spielerwerte vor.</p>
   </section>
 </template>

@@ -52,5 +52,6 @@ describe('person profile loading', () => {
     expect(stats).toContain('<PlayerboardVeoPlayerSeasonHeatmap')
     expect(stats).toContain('<PlayerboardVeoPlayerShotMap')
     expect(stats).toContain('usePlayerboardVeoPlayerHeatmaps')
+    expect(stats).toContain('Für diesen Zeitraum liegen keine Veo-Spielerwerte vor.')
   })
 })
