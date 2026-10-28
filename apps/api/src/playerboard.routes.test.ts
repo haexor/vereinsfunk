@@ -266,7 +266,7 @@ describe('PlayerBoard coach flows', () => {
   it('refuses to delete a player who already has points', async () => {
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
-      supabaseClients: clients({ userRpc: { playerboard_delete_player: { data: 'player_has_points', error: null } } }),
+      supabaseClients: clients({ serviceRpc: { playerboard_delete_player: { data: 'player_has_points', error: null } } }),
     })
     const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
     expect(response.statusCode).toBe(409)
@@ -277,7 +277,7 @@ describe('PlayerBoard coach flows', () => {
     const audit: Record<string, unknown>[] = []
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
-      supabaseClients: clients({ audit, userRpc: { playerboard_delete_player: { data: 'deleted', error: null } } }),
+      supabaseClients: clients({ audit, serviceRpc: { playerboard_delete_player: { data: 'deleted', error: null } } }),
     })
     const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
     expect(response.statusCode).toBe(204)

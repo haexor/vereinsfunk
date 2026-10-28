@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(7);
+select plan(8);
 
 -- playerboard_delete_player prueft "keine Punkte" und loescht unter einer Sperre des
 -- Kader-Eintrags, statt erst zu zaehlen und dann getrennt zu loeschen (dazwischen gespeicherte
@@ -20,10 +20,12 @@ insert into public.team_memberships (organization_id, department_id, team_id, us
   ('41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', '41951000-0000-4000-8000-000000000002', 'player');
 insert into public.directory_people (id, organization_id, department_id, team_id, first_name, last_name, birth_year) values
   ('41951000-2000-4000-8000-000000000001', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', 'Mia', 'Keller', 2013),
-  ('41951000-2000-4000-8000-000000000002', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', 'Jonas', 'Albers', 2013);
+  ('41951000-2000-4000-8000-000000000002', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', 'Jonas', 'Albers', 2013),
+  ('41951000-2000-4000-8000-000000000003', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', 'Lea', 'Sommer', 2013);
 insert into public.playerboard_players (id, organization_id, department_id, team_id, directory_person_id) values
   ('41951000-3000-4000-8000-000000000001', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', '41951000-2000-4000-8000-000000000001'),
-  ('41951000-3000-4000-8000-000000000002', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', '41951000-2000-4000-8000-000000000002');
+  ('41951000-3000-4000-8000-000000000002', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', '41951000-2000-4000-8000-000000000002'),
+  ('41951000-3000-4000-8000-000000000003', '41951000-1000-4000-8000-000000000001', '41951000-1100-4000-8000-000000000001', '41951000-1200-4000-8000-000000000001', '41951000-2000-4000-8000-000000000003');
 insert into public.playerboard_point_categories (id, organization_id, scope, name, value_min, value_max) values
   ('41951000-4000-4000-8000-000000000001', '41951000-1000-4000-8000-000000000001', 'organization', 'Fairness', 0, 5);
 insert into public.playerboard_trainings (id, organization_id, department_id, team_id, training_date, status) values
@@ -43,8 +45,12 @@ select is(public.playerboard_delete_player('41951000-3000-4000-8000-000000000001
 select is(public.playerboard_delete_player('41951000-3000-4000-8000-000000000002'), 'deleted', 'a squad entry without points is deleted');
 select is(public.playerboard_delete_player('41951000-9000-4000-8000-000000000001'), 'not_found', 'an unknown squad entry is reported as not found');
 
+-- Die API autorisiert training.manage selbst und loescht anschliessend ueber den Service-Client.
+set local role service_role;
+select is(public.playerboard_delete_player('41951000-3000-4000-8000-000000000003'), 'deleted', 'the service role can delete a squad entry without points');
+
 set local role postgres;
-select is((select count(*)::integer from public.playerboard_players where organization_id = '41951000-1000-4000-8000-000000000001'), 1, 'only the entry without points is gone');
+select is((select count(*)::integer from public.playerboard_players where organization_id = '41951000-1000-4000-8000-000000000001'), 1, 'entries deleted through authenticated and service roles are gone');
 select is((select count(*)::integer from public.playerboard_point_entries where organization_id = '41951000-1000-4000-8000-000000000001'), 1, 'the points of the kept entry are untouched');
 
 set local role anon;
