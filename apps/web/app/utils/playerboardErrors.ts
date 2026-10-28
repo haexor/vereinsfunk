@@ -10,7 +10,6 @@ const messages: Readonly<Record<string, string>> = {
   category_not_effective: 'Diese Kategorie gilt für die Mannschaft nicht (mehr).',
   point_value_out_of_range: 'Ein Wert liegt außerhalb des erlaubten Bereichs.',
   player_already_in_team: 'Diese Person steht bereits im Kader.',
-  player_has_points: 'Der Spieler hat bereits Punkte. Setze ihn stattdessen auf inaktiv.',
   player_has_account: 'Der Spieler hat bereits ein Konto.',
   email_required: 'Für eine Einladung braucht es eine E-Mail-Adresse.',
   already_a_member: 'Diese Adresse gehört bereits zu einem Mitglied.',

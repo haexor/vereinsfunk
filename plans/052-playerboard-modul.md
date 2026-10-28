@@ -457,8 +457,8 @@ Abweichungen:
   - Der Trainer pflegt die E-Mail der Personen seines Kaders auch ohne `directory.read` auf deren Scope (`PATCH …/players/:id` mit `email`).
   - `POST /v1/invitations` nimmt ebenfalls `directoryPersonId`, nur mit Mannschaft.
 - **E-Mail-Adressen im Kader** sehen nur Trainer (`training.manage`); Spieler sehen Namen und Rückennummern.
-- **Löschen nur ohne Punkte.**
-  - Kader-Einträge mit Punkten: `409 player_has_points`, dafür gibt es „inaktiv“.
+- **Kader-Einträge vollständig löschen.**
+  - Beim Entfernen eines Kader-Eintrags werden zugehörige Punktestände per `ON DELETE CASCADE` mitgelöscht. Die API bestätigt diese Folge im Bestätigungsdialog und auditiert die Aktion.
   - Kategorien mit Punkten: `409 category_in_use`, dafür gibt es „deaktivieren“.
   - Beim Löschen eines Trainings entfernt die API auch die Fotodateien im Bucket.
 - **Fotos in drei Schritten.**

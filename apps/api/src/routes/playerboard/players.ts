@@ -183,27 +183,24 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     return reply.code(200).send(await playerResponse(request, player.scope.teamId, params.id))
   })
 
-  // Entfernen nur ohne Punkte: Kader-Eintraege mit Punkten nehmen ueber "on delete cascade" ihre
-  // Punkte mit -- dafuer gibt es "inaktiv". Pruefen und Loeschen laufen in
-  // playerboard_delete_player unter einer Sperre des Eintrags; getrennt gingen dazwischen
-  // gespeicherte Punkte still verloren.
+  // Kader-Eintrag und zugehoerige Punktestaende werden atomar geloescht. Die Sperre in
+  // playerboard_delete_player serialisiert das mit parallelen Punkte-INSERTs.
   app.delete('/v1/playerboard/players/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const player = await loadPlayer(request, reply, params.id)
     if (!player) return
     if (!(await requirePermission(request, reply, 'training.manage', player.scope))) return
-    // Die API hat training.manage bereits fuer den Scope dieses Spielers geprueft. Der Service-RPC
-    // muss danach RLS-unabhaengig alle Punkt-Eintraege sehen, damit kein versteckter Datensatz die
-    // atomare Pruefung umgeht oder den Kader-Eintrag unnoetig vor der Loeschung blockiert.
+    // Die API prueft training.manage fuer den Scope, bevor der Service-RPC Kader und Punktestaende
+    // in einer Transaktion entfernt.
     const result = await supabaseClients.forService().rpc('playerboard_delete_player', { target_player_id: params.id })
     if (result.error) throw result.error
-    const outcome = parseSupabaseData(z.enum(['deleted', 'player_has_points', 'not_found']), result.data)
-    if (outcome === 'player_has_points') return reply.code(409).send({ error: 'player_has_points', correlationId: request.id })
+    const outcome = parseSupabaseData(z.enum(['deleted', 'not_found']), result.data)
     // Der Eintrag wurde nach dem Laden fuer die Berechtigungspruefung parallel entfernt.
     if (outcome === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     await recordAuditEvent(request, {
       organizationId: player.scope.organizationId, action: 'playerboard_player.removed', entityType: 'playerboard_players', entityId: params.id,
+      metadata: { teamId: player.scope.teamId },
     })
     return reply.code(204).send()
   })
