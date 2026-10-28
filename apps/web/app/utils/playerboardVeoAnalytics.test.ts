@@ -48,6 +48,8 @@ describe('playerboardVeoAnalytics', () => {
   })
 
   it('links Veo Analytics in the PlayerBoard sidebar', () => {
-    expect(registry).toContain("{ label: 'Veo Analytics', to: '/playerboard/analytics', icon: BarChart3 }")
+    expect(registry).toMatch(
+      /label: 'Veo Analytics',\s+to: '\/playerboard\/analytics',\s+icon: BarChart3,\s+permissions: \['training\.view'\]/,
+    )
   })
 })

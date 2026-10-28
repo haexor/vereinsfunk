@@ -1,7 +1,7 @@
 import type { Role } from '@vereinsfunk/authorization'
 import { describe, expect, it } from 'vitest'
 import { frameworkNavigation, visibleFrameworkNavigation } from './frameworkNavigation'
-import { anchorScopes, canUsePermission, type MembershipScopeLike } from './registry'
+import { anchorScopes, canUsePermission, canUsePermissionAtScope, type MembershipScopeLike } from './registry'
 
 const ORG = '10000000-1000-4000-8000-000000000001'
 const DEPT = '10000000-1100-4000-8000-000000000001'
@@ -15,26 +15,45 @@ function labelsFor(roles: { organization?: Role[]; department?: Role[]; team?: R
     departments: [{ id: DEPT, roles: roles.department ?? [], teams: [{ id: TEAM, roles: roles.team ?? [] }] }],
   }
   const anchors = anchorScopes(membership, { organizationId: ORG, departmentId: options.inDepartment ? DEPT : null })
+  const activeScope = { organizationId: ORG, departmentId: options.inDepartment ? DEPT : null }
   return visibleFrameworkNavigation(frameworkNavigation, {
     inDepartment: options.inDepartment ?? false,
     canUse: (permission) => canUsePermission(null, anchors, permission),
+    canUseAtActiveScope: (permission) => canUsePermissionAtScope(null, anchors, activeScope, permission),
     isModuleVisible: () => options.socialMedia ?? true,
   }).map((item) => item.label)
 }
 
 describe('framework navigation', () => {
+  it('declares the required permission for every framework navigation link', () => {
+    expect(frameworkNavigation.every((item) => item.permissions.length > 0)).toBe(true)
+  })
+
   it('shows a player nothing to manage', () => {
     expect(labelsFor({ team: ['player'] })).toEqual([])
   })
 
   it('shows a coach the pages of the own team', () => {
-    expect(labelsFor({ team: ['team_manager'] })).toEqual(['Marke', 'Mitglieder', 'Verzeichnis'])
+    expect(labelsFor({ team: ['team_manager'] })).toEqual(['Verzeichnis'])
   })
 
-  it('shows a department admin the department pages, but not contract and privacy', () => {
+  it('hides the organization-wide member page from a department admin', () => {
     expect(labelsFor({ department: ['department_admin'] })).toEqual([
-      'Marke', 'Struktur', 'Mitglieder', 'Verzeichnis', 'Einwilligungen', 'Integrationen', 'Module', 'Einstellungen',
+      'Struktur', 'Verzeichnis', 'Einwilligungen', 'Integrationen', 'Module', 'Einstellungen',
     ])
+  })
+
+  it('shows active-scope pages only when the role has permission at the selected scope', () => {
+    expect(labelsFor({ department: ['department_admin'] }, { inDepartment: true })).toContain('Marke')
+    expect(labelsFor({ department: ['department_admin'] })).not.toContain('Marke')
+  })
+
+  it('hides the organization-wide member page from a department and team lead without an organization role', () => {
+    expect(labelsFor({ department: ['department_admin'], team: ['team_manager'] })).not.toContain('Mitglieder')
+  })
+
+  it('keeps the organization-wide member page visible to an organization admin', () => {
+    expect(labelsFor({ organization: ['organization_admin'] })).toContain('Mitglieder')
   })
 
   it('shows the owner everything in the organization working area and hides organization-only pages in a department', () => {

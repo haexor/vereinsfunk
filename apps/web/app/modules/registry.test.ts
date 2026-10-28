@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { hasPermission } from '@vereinsfunk/authorization'
 import { AppModuleSchema, type ScopeModules } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
 import {
@@ -83,6 +84,41 @@ describe('module registry', () => {
         ).toBe(true)
       }
     }
+  })
+
+  it('requires explicit permissions for every module navigation link', () => {
+    for (const module of appModuleOrder) {
+      const definition = appModuleRegistry[module]
+      for (const item of [...definition.navigation, ...definition.managementNavigation]) {
+        expect(item.permissions.length, item.to).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('shows only module pages allowed by each role', () => {
+    const social = appModuleRegistry.social_media
+    const playerboard = appModuleRegistry.playerboard
+    const approverSocialPages = social.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['approver'], permission)))
+      .map((item) => item.label)
+    const playerSocialPages = social.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+    const teamManagerSocialSettings = social.managementNavigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['team_manager'], permission)))
+      .map((item) => item.label)
+    const playerboardPages = playerboard.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+    const playerboardSettings = playerboard.managementNavigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+
+    expect(approverSocialPages).toEqual(['Beiträge', 'Freigaben', 'Auswertung'])
+    expect(playerSocialPages).toEqual([])
+    expect(teamManagerSocialSettings).toEqual(['Bildstil', 'Bildkomposition', 'Stilprofile', 'Textbausteine'])
+    expect(playerboardPages).toEqual(['Übersicht', 'Rangliste', 'Spiele', 'Veo Analytics', 'Trainings', 'Kader'])
+    expect(playerboardSettings).toEqual([])
   })
 })
 
@@ -185,6 +221,7 @@ describe('app shell wiring', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
     const shellNavigation = readFileSync(join(appDirectory, 'composables/useShellNavigation.ts'), 'utf8')
     expect(shellNavigation).toContain('appModuleRegistry[module].navigation')
+    expect(shellNavigation).toContain('item.activeScopeOnly ? canUseAtActiveScope(permission) : canUse(permission)')
     expect(layout).toContain(
       `v-if="isModuleEnabled('social_media') && canUseAtActiveScope('post.create')"`,
     )
@@ -326,6 +363,16 @@ describe('module availability per person', () => {
     expect(canUsePermissionAtScope(activeTeamEntries, coach, atOrganization, 'post.create')).toBe(
       false,
     )
+  })
+
+  it('filters active-scope page links when the role only has a department permission', () => {
+    const analytics = appModuleRegistry.social_media.navigation.find((item) => item.to === '/auswertung')
+    const departmentAdmin = anchorScopes(membership({ department: ['department_admin'] }), atOrganization)
+
+    expect(analytics?.activeScopeOnly).toBe(true)
+    expect(canUsePermission(entries, departmentAdmin, 'analytics.view')).toBe(true)
+    expect(canUsePermissionAtScope(entries, departmentAdmin, atOrganization, 'analytics.view')).toBe(false)
+    expect(canUsePermissionAtScope(entries, departmentAdmin, { organizationId: ORG, departmentId: DEPT }, 'analytics.view')).toBe(true)
   })
 
   it('requires the active department module to be enabled for department actions', () => {

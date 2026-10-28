@@ -18,14 +18,16 @@ export interface FrameworkNavItem {
   module?: AppModule
   // Nur im Arbeitsbereich "Verein" (Vertrag und Datenschutz des ganzen Vereins).
   organizationOnly?: boolean
+  // Rechte muessen am aktiven Vereins-/Abteilungsscope gelten statt nur auf irgendeiner Ebene.
+  activeScopeOnly?: boolean
 }
 
 const STRUCTURE_MANAGE: readonly Permission[] = ['organization.manage', 'department.manage', 'team.manage']
 
 export const frameworkNavigation: readonly FrameworkNavItem[] = [
-  { label: 'Marke', to: '/marke', icon: Palette, permissions: ['brand.manage'] },
+  { label: 'Marke', to: '/marke', icon: Palette, permissions: ['brand.manage'], activeScopeOnly: true },
   { label: 'Struktur', to: '/struktur', icon: Building2, permissions: STRUCTURE_MANAGE },
-  { label: 'Mitglieder', to: '/mitglieder', icon: Users, permissions: ['member.invite', 'member.remove', ...STRUCTURE_MANAGE] },
+  { label: 'Mitglieder', to: '/mitglieder', icon: Users, permissions: ['organization.manage'] },
   { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser, permissions: ['directory.read'] },
   { label: 'Einwilligungen', to: '/einwilligungen', icon: ShieldCheck, permissions: ['consent.manage'] },
   { label: 'Integrationen', to: '/integrationen', icon: Plug, permissions: ['integration.manage'] },
@@ -41,10 +43,16 @@ export const frameworkNavigation: readonly FrameworkNavItem[] = [
 /** Die Eintraege, die die Person im aktuellen Arbeitsbereich sinnvoll nutzen kann. */
 export function visibleFrameworkNavigation(
   items: readonly FrameworkNavItem[],
-  context: { inDepartment: boolean; canUse: (permission: Permission) => boolean; isModuleVisible: (module: AppModule) => boolean },
+  context: {
+    inDepartment: boolean
+    canUse: (permission: Permission) => boolean
+    canUseAtActiveScope: (permission: Permission) => boolean
+    isModuleVisible: (module: AppModule) => boolean
+  },
 ): FrameworkNavItem[] {
   return items.filter((item) =>
     (!item.organizationOnly || !context.inDepartment)
     && (!item.module || context.isModuleVisible(item.module))
-    && item.permissions.some((permission) => context.canUse(permission)))
+    && item.permissions.some((permission) =>
+      item.activeScopeOnly ? context.canUseAtActiveScope(permission) : context.canUse(permission)))
 }

@@ -39,9 +39,10 @@ export interface ModuleNavItem {
   label: string
   to: string
   icon: Component
-  // Paket 055: nur mit einem dieser Rechte sichtbar (fehlt das Feld, erscheint der Eintrag mit
-  // dem Modul).
-  permissions?: readonly Permission[]
+  // Mindestens eines dieser Rechte ist fuer die Seite erforderlich.
+  permissions: readonly Permission[]
+  // Rechte muessen am aktiven Vereins-/Abteilungsscope gelten statt nur auf irgendeiner Ebene.
+  activeScopeOnly?: boolean
 }
 
 export interface AppModuleDefinition {
@@ -62,17 +63,23 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
     label: 'Social Media',
     icon: Megaphone,
     navigation: [
-      { label: 'Assistent', to: '/assistent', icon: Bot },
-      { label: 'Beiträge', to: '/beitraege', icon: FileText },
-      { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2 },
-      { label: 'Auswertung', to: '/auswertung', icon: BarChart3 },
+      { label: 'Assistent', to: '/assistent', icon: Bot, permissions: ['post.create'], activeScopeOnly: true },
+      {
+        label: 'Beiträge',
+        to: '/beitraege',
+        icon: FileText,
+        permissions: ['post.create', 'post.edit', 'post.submit', 'post.approve', 'post.publish'],
+        activeScopeOnly: true,
+      },
+      { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2, permissions: ['post.approve'] },
+      { label: 'Auswertung', to: '/auswertung', icon: BarChart3, permissions: ['analytics.view'], activeScopeOnly: true },
     ],
     managementNavigation: [
-      { label: 'Kanäle', to: '/kanaele', icon: Share2 },
-      { label: 'Bildstil', to: '/bildstil', icon: Frame },
-      { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid },
-      { label: 'Stilprofile', to: '/stilprofile', icon: Feather },
-      { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature },
+      { label: 'Kanäle', to: '/kanaele', icon: Share2, permissions: ['social_account.manage'] },
+      { label: 'Bildstil', to: '/bildstil', icon: Frame, permissions: ['brand.manage'], activeScopeOnly: true },
+      { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid, permissions: ['brand.manage'], activeScopeOnly: true },
+      { label: 'Stilprofile', to: '/stilprofile', icon: Feather, permissions: ['post.create'], activeScopeOnly: true },
+      { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature, permissions: ['post.create'], activeScopeOnly: true },
     ],
     extraRoutes: ['/erstellen'],
   },
@@ -82,13 +89,18 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
     icon: Trophy,
     // Paket 052: Uebersicht und Rangliste fuer alle (PR 4), Trainings und Kader fuer Trainer (PR 3).
     navigation: [
-      { label: 'Übersicht', to: '/playerboard', icon: Trophy },
-      { label: 'Rangliste', to: '/playerboard/rangliste', icon: Medal },
-      { label: 'Spiele', to: '/playerboard/spiele', icon: Goal },
+      { label: 'Übersicht', to: '/playerboard', icon: Trophy, permissions: ['training.view'] },
+      { label: 'Rangliste', to: '/playerboard/rangliste', icon: Medal, permissions: ['training.view'] },
+      { label: 'Spiele', to: '/playerboard/spiele', icon: Goal, permissions: ['training.view'] },
       // Spec 002: Nachbau von Veos Analytics Studio fuer die Saison der Mannschaft.
-      { label: 'Veo Analytics', to: '/playerboard/analytics', icon: BarChart3 },
-      { label: 'Trainings', to: '/playerboard/trainings', icon: ClipboardList },
-      { label: 'Kader', to: '/playerboard/kader', icon: Users },
+      {
+        label: 'Veo Analytics',
+        to: '/playerboard/analytics',
+        icon: BarChart3,
+        permissions: ['training.view'],
+      },
+      { label: 'Trainings', to: '/playerboard/trainings', icon: ClipboardList, permissions: ['training.view'] },
+      { label: 'Kader', to: '/playerboard/kader', icon: Users, permissions: ['training.view'] },
     ],
     managementNavigation: [
       {
