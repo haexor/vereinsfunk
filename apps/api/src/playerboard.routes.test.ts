@@ -261,16 +261,19 @@ describe('PlayerBoard coach flows', () => {
     expect(response.json()).toMatchObject({ error: 'player_has_account' })
   })
 
-  // Pruefen und Loeschen laufen atomar in playerboard_delete_player (pgTAP:
-  // playerboard_delete_player.test.sql); vorher zaehlte die Route und loeschte getrennt.
-  it('refuses to delete a player who already has points', async () => {
+  // Spieler und Punktestaende werden atomar entfernt; pgTAP prueft die Kaskade in der Datenbank.
+  it('deletes a player with points through playerboard_delete_player', async () => {
+    const audit: Record<string, unknown>[] = []
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
-      supabaseClients: clients({ serviceRpc: { playerboard_delete_player: { data: 'player_has_points', error: null } } }),
+      supabaseClients: clients({ audit, serviceRpc: { playerboard_delete_player: { data: 'deleted', error: null } } }),
     })
     const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
-    expect(response.statusCode).toBe(409)
-    expect(response.json()).toMatchObject({ error: 'player_has_points' })
+    expect(response.statusCode).toBe(204)
+    expect(audit).toEqual([expect.objectContaining({
+      action: 'playerboard_player.removed',
+      metadata: { teamId: TEAM_ID },
+    })])
   })
 
   it('deletes a player without points through playerboard_delete_player', async () => {

@@ -7,7 +7,7 @@ import { playerboardErrorMessage } from '../../utils/playerboardErrors'
 // Paket 052, PR 3: Kader der gewaehlten Mannschaft. Trainer legen Spieler selbst an (die
 // Verzeichnisperson entsteht im Hintergrund) oder uebernehmen eine Person aus dem Verzeichnis der
 // Mannschaft. Die E-Mail ist freiwillig und laesst sich jederzeit ergaenzen; "Einladen" geht,
-// sobald eine Adresse da ist. Spieler mit Punkten werden nicht geloescht, sondern inaktiv gesetzt.
+// sobald eine Adresse da ist. Beim Entfernen werden vorhandene Punktestaende mit geloescht.
 const api = useApiClient()
 const { team, teamId, organizationId, permissionScope, canManage } = await usePlayerboardTeam()
 const canInvite = computed(() => (permissionScope.value ? useCan('member.invite', permissionScope.value) : false))
@@ -143,7 +143,7 @@ async function saveEdit(player: PlayerboardPlayer) {
 }
 
 async function removePlayer(player: PlayerboardPlayer) {
-  if (!window.confirm(`${player.firstName} ${player.lastName} aus dem Kader entfernen?`)) return
+  if (!window.confirm(`${player.firstName} ${player.lastName} aus dem Kader entfernen? Zugehörige Punktestände werden ebenfalls gelöscht.`)) return
   busyId.value = player.id
   removeError.value = null
   actionError.value = ''
