@@ -25,7 +25,7 @@ const STRUCTURE_MANAGE: readonly Permission[] = ['organization.manage', 'departm
 export const frameworkNavigation: readonly FrameworkNavItem[] = [
   { label: 'Marke', to: '/marke', icon: Palette, permissions: ['brand.manage'] },
   { label: 'Struktur', to: '/struktur', icon: Building2, permissions: STRUCTURE_MANAGE },
-  { label: 'Mitglieder', to: '/mitglieder', icon: Users, permissions: ['member.invite', 'member.remove', ...STRUCTURE_MANAGE] },
+  { label: 'Mitglieder', to: '/mitglieder', icon: Users, permissions: ['organization.manage'] },
   { label: 'Verzeichnis', to: '/verzeichnis', icon: BookUser, permissions: ['directory.read'] },
   { label: 'Einwilligungen', to: '/einwilligungen', icon: ShieldCheck, permissions: ['consent.manage'] },
   { label: 'Integrationen', to: '/integrationen', icon: Plug, permissions: ['integration.manage'] },

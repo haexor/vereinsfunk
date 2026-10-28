@@ -27,10 +27,9 @@ export function useShellNavigation(scope: Ref<ActiveScope | null>, modules: Scop
   const route = useRoute()
   const { enabled: enabledModules, isEnabled: isModuleEnabled, canUse, ensureLoaded } = modules
 
-  // Paket 055: Eintraege mit permissions nur mit einem dieser Rechte; Gruppen ohne sichtbaren Eintrag
-  // entfallen ganz.
-  const navItemVisible = (item: ModuleNavItem) =>
-    !item.permissions || item.permissions.some((permission) => canUse(permission))
+  // Modul- und Verwaltungslinks erscheinen nur mit einem der fuer die konkrete Seite noetigen
+  // Rechte; Gruppen ohne sichtbaren Eintrag entfallen ganz.
+  const navItemVisible = (item: ModuleNavItem) => item.permissions.some((permission) => canUse(permission))
   const moduleGroups = computed(() =>
     appModuleOrder
       .filter((module) => isModuleEnabled(module))

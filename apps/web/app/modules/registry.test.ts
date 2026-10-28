@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
+import { hasPermission } from '@vereinsfunk/authorization'
 import { AppModuleSchema, type ScopeModules } from '@vereinsfunk/contracts'
 import { describe, expect, it } from 'vitest'
 import {
@@ -83,6 +84,41 @@ describe('module registry', () => {
         ).toBe(true)
       }
     }
+  })
+
+  it('requires explicit permissions for every module navigation link', () => {
+    for (const module of appModuleOrder) {
+      const definition = appModuleRegistry[module]
+      for (const item of [...definition.navigation, ...definition.managementNavigation]) {
+        expect(item.permissions.length, item.to).toBeGreaterThan(0)
+      }
+    }
+  })
+
+  it('shows only module pages allowed by each role', () => {
+    const social = appModuleRegistry.social_media
+    const playerboard = appModuleRegistry.playerboard
+    const approverSocialPages = social.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['approver'], permission)))
+      .map((item) => item.label)
+    const playerSocialPages = social.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+    const teamManagerSocialSettings = social.managementNavigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['team_manager'], permission)))
+      .map((item) => item.label)
+    const playerboardPages = playerboard.navigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+    const playerboardSettings = playerboard.managementNavigation
+      .filter((item) => item.permissions.some((permission) => hasPermission(['player'], permission)))
+      .map((item) => item.label)
+
+    expect(approverSocialPages).toEqual(['Beiträge', 'Freigaben', 'Auswertung'])
+    expect(playerSocialPages).toEqual([])
+    expect(teamManagerSocialSettings).toEqual(['Bildstil', 'Bildkomposition', 'Stilprofile', 'Textbausteine'])
+    expect(playerboardPages).toEqual(['Übersicht', 'Rangliste', 'Spiele', 'Veo Analytics', 'Trainings', 'Kader'])
+    expect(playerboardSettings).toEqual([])
   })
 })
 

@@ -23,18 +23,30 @@ function labelsFor(roles: { organization?: Role[]; department?: Role[]; team?: R
 }
 
 describe('framework navigation', () => {
+  it('declares the required permission for every framework navigation link', () => {
+    expect(frameworkNavigation.every((item) => item.permissions.length > 0)).toBe(true)
+  })
+
   it('shows a player nothing to manage', () => {
     expect(labelsFor({ team: ['player'] })).toEqual([])
   })
 
   it('shows a coach the pages of the own team', () => {
-    expect(labelsFor({ team: ['team_manager'] })).toEqual(['Marke', 'Mitglieder', 'Verzeichnis'])
+    expect(labelsFor({ team: ['team_manager'] })).toEqual(['Marke', 'Verzeichnis'])
   })
 
-  it('shows a department admin the department pages, but not contract and privacy', () => {
+  it('hides the organization-wide member page from a department admin', () => {
     expect(labelsFor({ department: ['department_admin'] })).toEqual([
-      'Marke', 'Struktur', 'Mitglieder', 'Verzeichnis', 'Einwilligungen', 'Integrationen', 'Module', 'Einstellungen',
+      'Marke', 'Struktur', 'Verzeichnis', 'Einwilligungen', 'Integrationen', 'Module', 'Einstellungen',
     ])
+  })
+
+  it('hides the organization-wide member page from a department and team lead without an organization role', () => {
+    expect(labelsFor({ department: ['department_admin'], team: ['team_manager'] })).not.toContain('Mitglieder')
+  })
+
+  it('keeps the organization-wide member page visible to an organization admin', () => {
+    expect(labelsFor({ organization: ['organization_admin'] })).toContain('Mitglieder')
   })
 
   it('shows the owner everything in the organization working area and hides organization-only pages in a department', () => {
