@@ -284,6 +284,18 @@ describe('PlayerBoard coach flows', () => {
     expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.removed' })])
   })
 
+  it('returns not found when the player disappears before the atomic delete', async () => {
+    const audit: Record<string, unknown>[] = []
+    const app = await startApp({
+      roleProvider: rolesProvider(['team_manager']),
+      supabaseClients: clients({ audit, serviceRpc: { playerboard_delete_player: { data: 'not_found', error: null } } }),
+    })
+    const response = await call(app, 'DELETE', `/v1/playerboard/players/${PLAYER_ID}`)
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'not_found' })
+    expect(audit).toEqual([])
+  })
+
   it('rejects public team page settings outside a team', async () => {
     const app = await startApp({ roleProvider: rolesProvider(['organization_admin']), supabaseClients: clients() })
     const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'organization', scopeId: ORGANIZATION_ID, patch: { publicSlug: 'u13' } })

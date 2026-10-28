@@ -200,8 +200,8 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     if (result.error) throw result.error
     const outcome = parseSupabaseData(z.enum(['deleted', 'player_has_points', 'not_found']), result.data)
     if (outcome === 'player_has_points') return reply.code(409).send({ error: 'player_has_points', correlationId: request.id })
-    // Per Service-Client gefunden, fuer den Nutzer aber nicht sperr- oder loeschbar: RLS.
-    if (outcome === 'not_found') return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
+    // Der Eintrag wurde nach dem Laden fuer die Berechtigungspruefung parallel entfernt.
+    if (outcome === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     await recordAuditEvent(request, {
       organizationId: player.scope.organizationId, action: 'playerboard_player.removed', entityType: 'playerboard_players', entityId: params.id,
     })
