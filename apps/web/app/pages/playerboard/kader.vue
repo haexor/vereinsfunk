@@ -18,6 +18,7 @@ const loading = ref(false)
 const errorMessage = ref('')
 const actionError = ref('')
 const notice = ref('')
+const removeError = ref<{ playerId: string; message: string } | null>(null)
 
 const { ready } = useScopedLoad(() => teamId.value, async (requestedTeamId, isLatest) => {
   players.value = []
@@ -42,6 +43,7 @@ watch(teamId, () => {
   directoryPeople.value = null
   editingId.value = null
   invitingId.value = null
+  removeError.value = null
 })
 
 const activePlayers = computed(() => players.value.filter((player) => player.active))
@@ -120,6 +122,7 @@ function startEdit(player: PlayerboardPlayer) {
   editForm.position = player.position ?? ''
   editForm.email = player.email ?? ''
   editForm.active = player.active
+  removeError.value = null
   actionError.value = ''
 }
 
@@ -142,13 +145,15 @@ async function saveEdit(player: PlayerboardPlayer) {
 async function removePlayer(player: PlayerboardPlayer) {
   if (!window.confirm(`${player.firstName} ${player.lastName} aus dem Kader entfernen?`)) return
   busyId.value = player.id
+  removeError.value = null
   actionError.value = ''
   try {
     await api.request(`/v1/playerboard/players/${player.id}`, { method: 'DELETE' })
     players.value = players.value.filter((item) => item.id !== player.id)
     editingId.value = null
+    removeError.value = null
   } catch (error) {
-    actionError.value = playerboardErrorMessage(error, 'Der Spieler konnte nicht entfernt werden.')
+    removeError.value = { playerId: player.id, message: playerboardErrorMessage(error, 'Der Spieler konnte nicht entfernt werden.') }
   } finally {
     busyId.value = null
   }
@@ -288,6 +293,9 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
                       <Trash2 :size="15" /> Aus dem Kader entfernen
                     </button>
                   </div>
+                  <p v-if="removeError?.playerId === player.id" class="text-sm font-semibold text-amber-800 sm:col-span-2 lg:col-span-4" role="alert">
+                    {{ removeError.message }}
+                  </p>
                 </form>
               </li>
             </ul>
