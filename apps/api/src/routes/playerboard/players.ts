@@ -193,7 +193,10 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     const player = await loadPlayer(request, reply, params.id)
     if (!player) return
     if (!(await requirePermission(request, reply, 'training.manage', player.scope))) return
-    const result = await supabaseClients.forUser(request.auth!.accessToken).rpc('playerboard_delete_player', { target_player_id: params.id })
+    // Die API hat training.manage bereits fuer den Scope dieses Spielers geprueft. Der Service-RPC
+    // muss danach RLS-unabhaengig alle Punkt-Eintraege sehen, damit kein versteckter Datensatz die
+    // atomare Pruefung umgeht oder den Kader-Eintrag unnoetig vor der Loeschung blockiert.
+    const result = await supabaseClients.forService().rpc('playerboard_delete_player', { target_player_id: params.id })
     if (result.error) throw result.error
     const outcome = parseSupabaseData(z.enum(['deleted', 'player_has_points', 'not_found']), result.data)
     if (outcome === 'player_has_points') return reply.code(409).send({ error: 'player_has_points', correlationId: request.id })
