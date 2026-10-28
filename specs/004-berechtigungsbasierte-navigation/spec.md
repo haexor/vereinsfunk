@@ -22,14 +22,15 @@ Als Vereinsmitglied möchte ich in der Navigation ausschließlich Seiten sehen, 
 
 1. **Given** eine Person hat Mitgliederrechte nur in einer Abteilung oder einem Team, **When** sie die Navigation öffnet, **Then** erscheint kein Link zur vereinsweiten Mitgliederseite.
 2. **Given** eine Person hat keine Berechtigung für Social-Media-Funktionen, **When** sie die Navigation öffnet, **Then** erscheinen keine Links der Social-Media-Bereiche.
-3. **Given** eine Person hat Zugriff auf einen Bereich eines Moduls, aber nicht auf eine bestimmte Verwaltungsseite darin, **When** sie die Navigation öffnet, **Then** erscheint der nicht erlaubte Link nicht.
-4. **Given** eine Person besitzt die erforderliche Berechtigung für eine Seite, **When** sie die Navigation öffnet, **Then** erscheint der zugehörige Link.
-5. **Given** eine Person ist zugleich Abteilungs- und Teamleitung, aber hat keine Vereinsrolle, **When** sie die Navigation öffnet, **Then** erscheint kein Link zur vereinsweiten Mitgliederseite.
-6. **Given** ein Bereich enthält keine für die Person erreichbaren Seiten, **When** die Navigation gerendert wird, **Then** erscheint weder die leere Gruppe noch deren Überschrift.
+3. **Given** eine Person hat ein Recht nur in einer Abteilung, aber der aktive Arbeitsbereich ist der Verein, **When** sie die Navigation öffnet, **Then** erscheinen Links zu Seiten, die das Recht im Vereinsscope benötigen, nicht.
+4. **Given** eine Person hat Zugriff auf einen Bereich eines Moduls, aber nicht auf eine bestimmte Verwaltungsseite darin, **When** sie die Navigation öffnet, **Then** erscheint der nicht erlaubte Link nicht.
+5. **Given** eine Person besitzt die erforderliche Berechtigung im aktiven Scope, **When** sie die Navigation öffnet, **Then** erscheint der zugehörige Link.
+6. **Given** eine Person ist zugleich Abteilungs- und Teamleitung, aber hat keine Vereinsrolle, **When** sie die Navigation öffnet, **Then** erscheint kein Link zur vereinsweiten Mitgliederseite.
+7. **Given** ein Bereich enthält keine für die Person erreichbaren Seiten, **When** die Navigation gerendert wird, **Then** erscheint weder die leere Gruppe noch deren Überschrift.
 
 ### Edge Cases
 
-- Eine Person besitzt Rollen auf mehreren Ebenen: Der Link wird nur gezeigt, wenn die Berechtigung für den tatsächlichen Umfang der Seite ausreicht.
+- Eine Person besitzt Rollen auf mehreren Ebenen: Der Link wird nur gezeigt, wenn die Berechtigung am aktiven Scope oder in einem von der Seite selbst auswählbaren Scope ausreicht.
 - Ein Mitglied hat keine Verwaltungsrechte: Es sieht keinen Verwaltungslink zur Mitgliederseite.
 - Ein Berechtigter wechselt in einen anderen Verein: Die Navigation folgt den Rechten des aktuell gewählten Vereins.
 

@@ -17,5 +17,6 @@ pnpm --filter @vereinsfunk/web exec vitest run app/modules/frameworkNavigation.t
 - Vereinsadministratoren sehen den Link „Mitglieder“.
 - Personen ohne Social-Media-Berechtigung sehen keine Social-Media-Links.
 - Personen mit einzelnen Social-Media-Rechten sehen nur passende Seiten, zum Beispiel keine Freigaben ohne `post.approve` und keine Kanäle ohne `social_account.manage`.
+- Rechte nur in einer Abteilung zeigen keine Seitenlinks, die im aktiven Vereinsscope dieselbe Berechtigung benötigen; beim Wechsel in die berechtigte Abteilung erscheinen sie.
 - PlayerBoard-Seitenberechtigungen werden je Link ausgewertet; Verwaltungsseiten erfordern `playerboard.manage`.
 - Leere Gruppen und Überschriften erscheinen nicht.

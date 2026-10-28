@@ -221,6 +221,7 @@ describe('app shell wiring', () => {
     const layout = readFileSync(join(appDirectory, 'layouts/default.vue'), 'utf8')
     const shellNavigation = readFileSync(join(appDirectory, 'composables/useShellNavigation.ts'), 'utf8')
     expect(shellNavigation).toContain('appModuleRegistry[module].navigation')
+    expect(shellNavigation).toContain('item.activeScopeOnly ? canUseAtActiveScope(permission) : canUse(permission)')
     expect(layout).toContain(
       `v-if="isModuleEnabled('social_media') && canUseAtActiveScope('post.create')"`,
     )
@@ -362,6 +363,16 @@ describe('module availability per person', () => {
     expect(canUsePermissionAtScope(activeTeamEntries, coach, atOrganization, 'post.create')).toBe(
       false,
     )
+  })
+
+  it('filters active-scope page links when the role only has a department permission', () => {
+    const analytics = appModuleRegistry.social_media.navigation.find((item) => item.to === '/auswertung')
+    const departmentAdmin = anchorScopes(membership({ department: ['department_admin'] }), atOrganization)
+
+    expect(analytics?.activeScopeOnly).toBe(true)
+    expect(canUsePermission(entries, departmentAdmin, 'analytics.view')).toBe(true)
+    expect(canUsePermissionAtScope(entries, departmentAdmin, atOrganization, 'analytics.view')).toBe(false)
+    expect(canUsePermissionAtScope(entries, departmentAdmin, { organizationId: ORG, departmentId: DEPT }, 'analytics.view')).toBe(true)
   })
 
   it('requires the active department module to be enabled for department actions', () => {

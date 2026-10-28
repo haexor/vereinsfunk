@@ -25,11 +25,18 @@ const organizationOnlyRoutes = new Set(frameworkNavigation.filter((item) => item
 
 export function useShellNavigation(scope: Ref<ActiveScope | null>, modules: ScopeModules) {
   const route = useRoute()
-  const { enabled: enabledModules, isEnabled: isModuleEnabled, canUse, ensureLoaded } = modules
+  const {
+    enabled: enabledModules,
+    isEnabled: isModuleEnabled,
+    canUse,
+    canUseAtActiveScope,
+    ensureLoaded,
+  } = modules
 
   // Modul- und Verwaltungslinks erscheinen nur mit einem der fuer die konkrete Seite noetigen
   // Rechte; Gruppen ohne sichtbaren Eintrag entfallen ganz.
-  const navItemVisible = (item: ModuleNavItem) => item.permissions.some((permission) => canUse(permission))
+  const navItemVisible = (item: ModuleNavItem) => item.permissions.some((permission) =>
+    item.activeScopeOnly ? canUseAtActiveScope(permission) : canUse(permission))
   const moduleGroups = computed(() =>
     appModuleOrder
       .filter((module) => isModuleEnabled(module))
@@ -44,6 +51,7 @@ export function useShellNavigation(scope: Ref<ActiveScope | null>, modules: Scop
   const organizationNavigation = computed(() => visibleFrameworkNavigation(frameworkNavigation, {
     inDepartment: Boolean(scope.value?.departmentId),
     canUse,
+    canUseAtActiveScope,
     isModuleVisible: isModuleEnabled,
   }))
   const moduleManagementGroups = computed(() =>

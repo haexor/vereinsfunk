@@ -6,7 +6,7 @@
 
 ## Summary
 
-Die Berechtigungsmetadaten aller Sidebar-Links werden an die Seitenberechtigungen angepasst. Die Shell blendet Links aus, wenn die Person die erforderliche Seitenberechtigung nicht besitzt, und lässt leere Modulgruppen entfallen. Insbesondere erfordert die vereinsweite Mitgliederseite `organization.manage`. Serverseitige Autorisierung bleibt unverändert.
+Die Berechtigungsmetadaten aller Sidebar-Links werden an die Seitenberechtigungen und deren Scope angepasst. Die Shell blendet Links aus, wenn die Person die erforderliche Seitenberechtigung nicht besitzt, und lässt leere Modulgruppen entfallen. Insbesondere erfordert die vereinsweite Mitgliederseite `organization.manage`. Serverseitige Autorisierung bleibt unverändert.
 
 ## Technical Context
 

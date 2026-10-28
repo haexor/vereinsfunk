@@ -41,6 +41,8 @@ export interface ModuleNavItem {
   icon: Component
   // Mindestens eines dieser Rechte ist fuer die Seite erforderlich.
   permissions: readonly Permission[]
+  // Rechte muessen am aktiven Vereins-/Abteilungsscope gelten statt nur auf irgendeiner Ebene.
+  activeScopeOnly?: boolean
 }
 
 export interface AppModuleDefinition {
@@ -61,22 +63,23 @@ export const appModuleRegistry: Readonly<Record<AppModule, AppModuleDefinition>>
     label: 'Social Media',
     icon: Megaphone,
     navigation: [
-      { label: 'Assistent', to: '/assistent', icon: Bot, permissions: ['post.create'] },
+      { label: 'Assistent', to: '/assistent', icon: Bot, permissions: ['post.create'], activeScopeOnly: true },
       {
         label: 'Beiträge',
         to: '/beitraege',
         icon: FileText,
         permissions: ['post.create', 'post.edit', 'post.submit', 'post.approve', 'post.publish'],
+        activeScopeOnly: true,
       },
       { label: 'Freigaben', to: '/freigaben', icon: CheckCircle2, permissions: ['post.approve'] },
-      { label: 'Auswertung', to: '/auswertung', icon: BarChart3, permissions: ['analytics.view'] },
+      { label: 'Auswertung', to: '/auswertung', icon: BarChart3, permissions: ['analytics.view'], activeScopeOnly: true },
     ],
     managementNavigation: [
       { label: 'Kanäle', to: '/kanaele', icon: Share2, permissions: ['social_account.manage'] },
-      { label: 'Bildstil', to: '/bildstil', icon: Frame, permissions: ['brand.manage'] },
-      { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid, permissions: ['brand.manage'] },
-      { label: 'Stilprofile', to: '/stilprofile', icon: Feather, permissions: ['post.create'] },
-      { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature, permissions: ['post.create'] },
+      { label: 'Bildstil', to: '/bildstil', icon: Frame, permissions: ['brand.manage'], activeScopeOnly: true },
+      { label: 'Bildkomposition', to: '/bildkomposition', icon: LayoutGrid, permissions: ['brand.manage'], activeScopeOnly: true },
+      { label: 'Stilprofile', to: '/stilprofile', icon: Feather, permissions: ['post.create'], activeScopeOnly: true },
+      { label: 'Textbausteine', to: '/textbausteine', icon: FileSignature, permissions: ['post.create'], activeScopeOnly: true },
     ],
     extraRoutes: ['/erstellen'],
   },
