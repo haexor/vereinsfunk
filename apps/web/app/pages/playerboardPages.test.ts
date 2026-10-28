@@ -15,6 +15,15 @@ function functionBody(source: string, name: string): string {
 // Lade- und Reihenfolgefragen der PlayerBoard-Seiten, die sich nur im Quelltext festhalten lassen
 // -- dieselbe Bauart wie targetPlatformDefaults.test.ts.
 describe('PlayerBoard-Seiten', () => {
+  it('zeigt den Ablehnungsgrund einer Kaderloeschung direkt beim betroffenen Spieler', () => {
+    const page = read('playerboard/kader.vue')
+
+    expect(page).toContain("removeError.value = { playerId: player.id, message: playerboardErrorMessage(error, 'Der Spieler konnte nicht entfernt werden.') }")
+    expect(page).toContain('removeError?.playerId === player.id')
+    expect(page).toContain('role="alert"')
+    expect(page).toContain('{{ removeError.message }}')
+  })
+
   it('verfolgt einen Veo-Abgleich ueber usePolling, auch wenn er beim Oeffnen schon lief', () => {
     const page = read('playerboard/veo.vue')
 
