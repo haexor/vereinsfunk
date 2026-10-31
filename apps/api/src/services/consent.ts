@@ -144,6 +144,7 @@ export function describeConsentScope(scope: ConsentScope): string[] {
   lines.push(`Plattformen: ${scope.platforms === null ? 'alle vom Verein genutzten' : scope.platforms.join(', ')}`)
   lines.push(`Medienart: ${scope.mediaKinds.map((kind) => (kind === 'photo' ? 'Foto' : 'Video')).join(', ')}`)
   lines.push(`Anlässe: ${scope.contexts === null ? 'alle' : scope.contexts.map((context) => contextLabels[context] ?? context).join(', ')}`)
+  lines.push(`Abteilungen: ${scope.departmentIds === null ? 'alle' : scope.departmentIds.join(', ')}`)
   lines.push(scope.namingAllowed ? 'Namentliche Nennung ist erlaubt.' : 'Namentliche Nennung ist nicht erlaubt.')
   return lines
 }
