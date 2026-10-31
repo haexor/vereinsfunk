@@ -127,8 +127,8 @@ const registerForm = reactive({
 const registerSubmitting = ref(false)
 const registerError = ref('')
 // Das Datei-Feld laesst sich nicht per v-model leeren: ohne neuen key zeigte es nach dem Hinterlegen
-// weiter die alte Datei und erfuellte "required", waehrend registerForm.file schon null war -- der
-// naechste Versuch brach dann wortlos ab (gleiches Muster wie syncFileInputKey in integrationen.vue).
+// weiter die alte Datei, waehrend registerForm.file schon null war -- der naechste Eintrag liefe dann
+// ohne Nachweis, obwohl einer angezeigt wird (gleiches Muster wie syncFileInputKey in integrationen.vue).
 const registerFileInputKey = ref(0)
 
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
@@ -137,7 +137,7 @@ function errorCodeOf(error: unknown): string | undefined {
 }
 
 async function registerConsent() {
-  if (!organizationId.value || !registerForm.file) return
+  if (!organizationId.value) return
   // Die Person ist Pflicht: seit der Umstellung auf die shadcn-Select-Komponente gibt es kein
   // natives required mehr (reka-ui rendert das versteckte <select> nur mit name-Prop), und die
   // API nimmt eine Erklaerung ohne directoryPersonId klaglos an.
@@ -161,7 +161,8 @@ async function registerConsent() {
     // bliebe ein zuvor gesetzter Haken auch nach dem Wechsel auf 'self' bestehen (gefunden im
     // Code-Review), weil das Feld dann ausgeblendet wird, aber registerForm.guardianConfirmed nicht.
     body.set('guardianConfirmed', String(registerForm.signerRole === 'guardian' && registerForm.guardianConfirmed))
-    body.set('file', registerForm.file)
+    // Der Nachweis ist optional; ohne Datei wird kein Dateiteil gesendet.
+    if (registerForm.file) body.set('file', registerForm.file)
     const created = await api.request('/v1/consents', { method: 'POST', body }, ConsentRecordSchema)
     consents.value = [created, ...consents.value]
     registerForm.directoryPersonId = ''; registerForm.signedAt = ''; registerForm.signerName = ''
@@ -332,8 +333,8 @@ async function resendRequest(request: ConsentRequest) {
             <label v-if="registerForm.signerRole === 'guardian'" class="flex items-center gap-1.5 text-xs">
               <input v-model="registerForm.guardianConfirmed" type="checkbox" required /> Erziehungsberechtigung bestätigt
             </label>
-            <label><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP)</span>
-              <input :key="registerFileInputKey" type="file" required accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
+            <label><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP) <span class="font-normal text-[#7b827d]">(optional)</span></span>
+              <input :key="registerFileInputKey" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
             </label>
             <p v-if="registerError" class="text-xs text-amber-800">{{ registerError }}</p>
             <button type="submit" :disabled="registerSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">

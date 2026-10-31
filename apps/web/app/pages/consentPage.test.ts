@@ -11,7 +11,7 @@ describe('Einwilligungen', () => {
     const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
 
     expect(page).toContain('registerForm.file = null; registerFileInputKey.value += 1')
-    expect(page).toContain('<input :key="registerFileInputKey" type="file" required')
+    expect(page).toContain('<input :key="registerFileInputKey" type="file"')
   })
 
   it('laesst eine veraltete Ladung auch im Fehlerfall nichts mehr schreiben', () => {
