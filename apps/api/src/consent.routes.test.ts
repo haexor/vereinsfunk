@@ -30,15 +30,18 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     }
   }
 
-  function consentUploadBody(fields: Record<string, string>, extra: Record<string, string> = {}) {
+  function consentUploadBody(fields: Record<string, string>, extra: Record<string, string> = {}, options: { withFile?: boolean } = {}) {
     const boundary = '----vereinsfunkConsentBoundary'
     const parts: Buffer[] = []
     for (const [key, value] of Object.entries({ organizationId: ORGANIZATION_ID, directoryPersonId: DIRECTORY_PERSON_ID, ...fields, ...extra })) {
       parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${key}"\r\n\r\n${value}\r\n`))
     }
-    parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="nachweis.pdf"\r\nContent-Type: application/pdf\r\n\r\n`))
-    parts.push(Buffer.from('%PDF-1.4 fake evidence content'))
-    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`))
+    if (options.withFile ?? true) {
+      parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="file"; filename="nachweis.pdf"\r\nContent-Type: application/pdf\r\n\r\n`))
+      parts.push(Buffer.from('%PDF-1.4 fake evidence content'))
+      parts.push(Buffer.from('\r\n'))
+    }
+    parts.push(Buffer.from(`--${boundary}--\r\n`))
     return { boundary, body: Buffer.concat(parts) }
   }
 
@@ -324,6 +327,65 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(insertedRow?.scope).toContain('Medienart: Foto')
     expect(insertedRow?.scope).toContain(`Abteilungen: ${DEPARTMENT_ID}`)
     expect(response.json()).toMatchObject({ signerName: null })
+  })
+
+  it('registers a paper form without an evidence file and leaves evidence_path empty', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: { from: () => ({ upload: async () => { throw new Error('nothing to upload without an evidence file') } }) },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id }), error: null }) } }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { boundary, body } = consentUploadBody(consentScopeAndFields(), {}, { withFile: false })
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow).toMatchObject({ evidence_path: null })
+  })
+
+  it('answers 404 for the evidence download of a consent registered without a file', async () => {
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: { from: () => ({ createSignedUrl: async () => { throw new Error('no signed URL without an evidence path') } }) },
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null })
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({ method: 'GET', url: `/v1/consents/${CONSENT_ID}/evidence-url`, headers: { authorization: `Bearer ${token}` } })
+    expect(response.statusCode).toBe(404)
+    expect(response.json()).toMatchObject({ error: 'evidence_not_found' })
   })
 
   it('removes the uploaded evidence file when the consent record insert fails', async () => {

@@ -66,23 +66,23 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
   })
 
   // Registratur einer Papiererklaerung (Plan 015, Abschnitt 2). Multipart wie
-  // POST /v1/brand/assets: Datei zuerst vollstaendig lesen, danach die begleitenden Felder
-  // auswerten (busboy fuellt filePart.fields erst danach). Ohne Nachweisdatei kein Eintrag --
-  // digitale Einwilligungen (origin='digital') entstehen ausschliesslich ueber den oeffentlichen
-  // Anfrage-Antwort-Fluss unten, nicht hier.
+  // POST /v1/brand/assets, aber die Nachweisdatei ist optional: request.parts() statt
+  // request.file(), weil file() ohne Dateiteil gar keine Felder liefert. Ohne Datei bleibt
+  // evidence_path NULL (wie nach Ablauf der Nachweisfrist). Digitale Einwilligungen
+  // (origin='digital') entstehen ausschliesslich ueber den oeffentlichen Anfrage-Antwort-Fluss
+  // unten, nicht hier.
   app.post('/v1/consents', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
 
-    const filePart = await request.file()
-    if (!filePart) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
-
     let fields: z.infer<typeof CreateConsentRecordFieldsSchema>
-    let buffer: Buffer
+    let evidence: { buffer: Buffer; mimetype: string } | null = null
     try {
-      buffer = await filePart.toBuffer()
-      const rawFields = Object.fromEntries(
-        Object.entries(filePart.fields).map(([key, field]) => [key, field && 'value' in field ? field.value : undefined]),
-      )
+      const rawFields: Record<string, unknown> = {}
+      for await (const part of request.parts()) {
+        // Der Dateistrom muss innerhalb der Schleife gelesen werden, sonst blockiert busboy.
+        if (part.type === 'file') evidence = { buffer: await part.toBuffer(), mimetype: part.mimetype }
+        else rawFields[part.fieldname] = part.value
+      }
       const scopeStructuredRaw = rawFields.scopeStructured
       if (typeof scopeStructuredRaw === 'string') rawFields.scopeStructured = JSON.parse(scopeStructuredRaw)
       fields = CreateConsentRecordFieldsSchema.parse(rawFields)
@@ -93,7 +93,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
       if (error instanceof z.ZodError || error instanceof SyntaxError) return reply.code(400).send({ error: 'invalid_request', correlationId: request.id })
       throw error
     }
-    if (!ALLOWED_EVIDENCE_MIME.has(filePart.mimetype)) return reply.code(400).send({ error: 'invalid_file_type', correlationId: request.id })
+    if (evidence && !ALLOWED_EVIDENCE_MIME.has(evidence.mimetype)) return reply.code(400).send({ error: 'invalid_file_type', correlationId: request.id })
 
     const client = supabaseClients.forUser(request.auth!.accessToken)
     let departmentId: string | null = fields.departmentId ?? null
@@ -122,9 +122,11 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
 
     const service = supabaseClients.forService()
     const consentId = randomUUID()
-    const objectPath = `organizations/${fields.organizationId}/consents/${consentId}/nachweis`
-    const upload = await service.storage.from('raw-media').upload(objectPath, buffer, { contentType: filePart.mimetype })
-    if (upload.error) throw upload.error
+    const objectPath = evidence ? `organizations/${fields.organizationId}/consents/${consentId}/nachweis` : null
+    if (evidence && objectPath) {
+      const upload = await service.storage.from('raw-media').upload(objectPath, evidence.buffer, { contentType: evidence.mimetype })
+      if (upload.error) throw upload.error
+    }
 
     const insert = await service
       .from('consent_records')
@@ -154,8 +156,10 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (insert.error) {
       // Ohne Zeile verweist nichts mehr auf die Nachweisdatei -- keine Aufbewahrungsregel faende sie
       // je, eine private Unterschrift bliebe dauerhaft im Bucket liegen.
-      const removed = await service.storage.from('raw-media').remove([objectPath])
-      if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'consent evidence cleanup failed')
+      if (objectPath) {
+        const removed = await service.storage.from('raw-media').remove([objectPath])
+        if (removed.error) request.log.error({ err: removed.error, correlationId: request.id }, 'consent evidence cleanup failed')
+      }
       throw insert.error
     }
 
@@ -234,6 +238,8 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const service = supabaseClients.forService()
     const evidence = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
     if (evidence.error) throw evidence.error
+    // Ohne hochgeladene Datei oder nach Ablauf der Nachweisfrist (retention.ts) ist evidence_path NULL.
+    if (!evidence.data.evidence_path) return reply.code(404).send({ error: 'evidence_not_found', correlationId: request.id })
     const signed = await service.storage.from(evidence.data.evidence_bucket as string).createSignedUrl(evidence.data.evidence_path as string, 300, { download: true })
     if (signed.error) throw signed.error
     await recordAuditEvent(request, { organizationId: loaded.row.organization_id, action: 'consent.evidence_viewed', entityType: 'consent_records', entityId: params.id })
