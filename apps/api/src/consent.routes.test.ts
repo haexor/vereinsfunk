@@ -288,6 +288,42 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.json()).toMatchObject({ status: 'expired' })
   })
 
+  it('registers a paper form without statement text or signer name and derives the scope line from the checkboxes', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'directory_people') return chain({ data: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          storage: { from: () => ({ upload: async () => ({ error: null }) }) },
+          from: (table: string) => {
+            if (table === 'consent_records') return { insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) } }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const { scopeStructured, signedAt } = consentScopeAndFields()
+    const { boundary, body } = consentUploadBody({ scopeStructured, signedAt, signerRole: 'self', guardianConfirmed: 'false' })
+    const response = await app.inject({
+      method: 'POST', url: '/v1/consents',
+      headers: { authorization: `Bearer ${token}`, 'content-type': `multipart/form-data; boundary=${boundary}` },
+      payload: body,
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow?.signer_name).toBeNull()
+    expect(insertedRow?.scope).toContain('Medienart: Foto')
+    expect(response.json()).toMatchObject({ signerName: null })
+  })
+
   it('removes the uploaded evidence file when the consent record insert fails', async () => {
     const removedPaths: string[][] = []
     let uploadedPath: string | undefined

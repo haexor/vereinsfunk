@@ -14,6 +14,7 @@ import {
   computeConsentValidity,
   currentOrganizationConsentText,
   DEFAULT_CONSENT_TEXT_VERSION,
+  describeConsentScope,
   loadConsentRecordForScope,
   mapConsentRecordRow,
 } from '../services/consent.js'
@@ -135,13 +136,13 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         // Ergaenzung von directory_person_id in Paket 014) -- bei einer echten Personenzuordnung
         // dient die stabile UUID selbst als Referenz, es wird kein zusaetzlicher Wert erfunden.
         pseudonymous_subject_ref: fields.pseudonymousSubjectRef ?? fields.directoryPersonId,
-        scope: fields.scope,
+        scope: fields.scope ?? describeConsentScope(fields.scopeStructured).join(' '),
         scope_structured: fields.scopeStructured,
         origin: 'paper',
         evidence_bucket: 'raw-media',
         evidence_path: objectPath,
         signed_at: fields.signedAt,
-        signer_name: fields.signerName,
+        signer_name: fields.signerName ?? null,
         signer_role: fields.signerRole,
         guardian_confirmed: fields.guardianConfirmed,
         valid_from: validity.validFrom,
