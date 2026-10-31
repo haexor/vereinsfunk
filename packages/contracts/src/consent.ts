@@ -60,10 +60,12 @@ export const CreateConsentRecordFieldsSchema = z.object({
   departmentId: UuidSchema.optional(),
   directoryPersonId: UuidSchema.optional(),
   pseudonymousSubjectRef: z.string().trim().min(8).max(160).optional(),
-  scope: z.string().trim().min(1).max(500),
+  // Optional, damit die Registratur nur die Haekchen braucht: ohne Freitext leitet die API die
+  // Umfangszeile aus scopeStructured ab (wie beim digitalen Weg).
+  scope: z.string().trim().min(1).max(500).optional(),
   scopeStructured: ConsentScopeSchema,
   signedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  signerName: z.string().trim().min(1).max(160),
+  signerName: z.string().trim().min(1).max(160).optional(),
   signerRole: ConsentSignerRoleSchema,
   guardianConfirmed: z.stringbool().default(false),
 }).refine((value) => Boolean(value.directoryPersonId) !== Boolean(value.pseudonymousSubjectRef), {

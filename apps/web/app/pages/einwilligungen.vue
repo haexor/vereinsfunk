@@ -120,7 +120,7 @@ async function revoke(consent: ConsentRecord) {
 // --- Papiererklärung hinterlegen ------------------------------------------------------------
 
 const registerForm = reactive({
-  directoryPersonId: '', scope: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
+  directoryPersonId: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
   purposes: ['social_media'] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
   file: null as File | null,
 })
@@ -152,10 +152,10 @@ async function registerConsent() {
     const body = new FormData()
     body.set('organizationId', organizationId.value)
     if (registerForm.directoryPersonId) body.set('directoryPersonId', registerForm.directoryPersonId)
-    body.set('scope', registerForm.scope)
     body.set('scopeStructured', JSON.stringify(scopeStructured))
     body.set('signedAt', registerForm.signedAt)
-    body.set('signerName', registerForm.signerName)
+    // Optional: ein leerer Name wird gar nicht erst gesendet, sonst scheiterte er an min(1).
+    if (registerForm.signerName.trim()) body.set('signerName', registerForm.signerName)
     body.set('signerRole', registerForm.signerRole)
     // Eine Erziehungsberechtigung kann nur bestaetigt sein, wenn die Rolle 'guardian' ist -- sonst
     // bliebe ein zuvor gesetzter Haken auch nach dem Wechsel auf 'self' bestehen (gefunden im
@@ -164,7 +164,7 @@ async function registerConsent() {
     body.set('file', registerForm.file)
     const created = await api.request('/v1/consents', { method: 'POST', body }, ConsentRecordSchema)
     consents.value = [created, ...consents.value]
-    registerForm.directoryPersonId = ''; registerForm.scope = ''; registerForm.signedAt = ''; registerForm.signerName = ''
+    registerForm.directoryPersonId = ''; registerForm.signedAt = ''; registerForm.signerName = ''
     registerForm.guardianConfirmed = false; registerForm.file = null; registerFileInputKey.value += 1
   } catch (error) {
     registerError.value = errorCodeOf(error) === 'guardian_required_for_minor' ? GUARDIAN_REQUIRED_MESSAGE : 'Die Erklärung konnte nicht hinterlegt werden.'
@@ -314,9 +314,6 @@ async function resendRequest(request: ConsentRequest) {
                 </SelectContent>
               </Select>
             </label>
-            <label><span class="mb-1 block text-xs font-semibold">Wiedergabe der Erklärung</span>
-              <textarea v-model="registerForm.scope" required maxlength="500" rows="2" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
-            </label>
             <div class="flex flex-wrap gap-3 text-xs">
               <label class="flex items-center gap-1.5"><input v-model="registerForm.mediaKinds" type="checkbox" value="photo" /> Foto</label>
               <label class="flex items-center gap-1.5"><input v-model="registerForm.mediaKinds" type="checkbox" value="video" /> Video</label>
@@ -325,8 +322,8 @@ async function resendRequest(request: ConsentRequest) {
             <label><span class="mb-1 block text-xs font-semibold">Unterschriftsdatum</span>
               <input v-model="registerForm.signedAt" type="date" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
             </label>
-            <label><span class="mb-1 block text-xs font-semibold">Unterzeichnet von</span>
-              <input v-model="registerForm.signerName" required maxlength="160" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
+            <label><span class="mb-1 block text-xs font-semibold">Unterzeichnet von <span class="font-normal text-[#7b827d]">(optional)</span></span>
+              <input v-model="registerForm.signerName" maxlength="160" class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
             </label>
             <div class="flex items-center gap-3 text-xs">
               <label class="flex items-center gap-1.5"><input v-model="registerForm.signerRole" type="radio" name="signerRole" value="self" /> Person selbst</label>

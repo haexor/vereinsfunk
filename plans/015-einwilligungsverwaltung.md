@@ -55,7 +55,7 @@ interface ConsentScope {
 }
 ```
 
-Diese Struktur ersetzt den Freitext nicht, sondern ergänzt ihn: `scope` bleibt als menschenlesbare Wiedergabe der unterschriebenen Erklärung erhalten, `scope_structured` wird geprüft. Bei Widerspruch gilt das Papier — deshalb ist der Freitext weiterhin Pflicht und der Upload des Nachweises ebenfalls.
+Diese Struktur ersetzt den Freitext nicht, sondern ergänzt ihn: `scope` bleibt als menschenlesbare Wiedergabe der unterschriebenen Erklärung erhalten, `scope_structured` wird geprüft. Bei Widerspruch gilt das Papier — deshalb ist der Upload des Nachweises Pflicht. Der Freitext und der Name der unterzeichnenden Person sind seit 2026-10-31 optional, damit eine Papiererklärung mit wenigen Klicks hinterlegt werden kann; fehlt der Freitext, leitet die API `scope` aus `scope_structured` ab (wie beim digitalen Weg).
 
 `namingAllowed` ist wichtiger, als es aussieht: viele Vereine dürfen ein Foto zeigen, aber nicht „Lisa M. (11) erzielte das Siegtor“ schreiben. Der Content-Generator muss das wissen.
 
