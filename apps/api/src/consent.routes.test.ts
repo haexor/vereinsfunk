@@ -288,7 +288,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.json()).toMatchObject({ status: 'expired' })
   })
 
-  it('registers a paper form without statement text or signer name and derives the scope line from the checkboxes', async () => {
+  it('registers a paper form without statement text or signer name and includes department restrictions in the derived scope', async () => {
     let insertedRow: Record<string, unknown> | undefined
     const clients: SupabaseClientFactory = {
       forUser: () =>
@@ -311,7 +311,8 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
-    const { scopeStructured, signedAt } = consentScopeAndFields()
+    const signedAt = '2026-08-01'
+    const scopeStructured = JSON.stringify({ purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: [DEPARTMENT_ID] })
     const { boundary, body } = consentUploadBody({ scopeStructured, signedAt, signerRole: 'self', guardianConfirmed: 'false' })
     const response = await app.inject({
       method: 'POST', url: '/v1/consents',
@@ -321,6 +322,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(response.statusCode).toBe(201)
     expect(insertedRow?.signer_name).toBeNull()
     expect(insertedRow?.scope).toContain('Medienart: Foto')
+    expect(insertedRow?.scope).toContain(`Abteilungen: ${DEPARTMENT_ID}`)
     expect(response.json()).toMatchObject({ signerName: null })
   })
 
