@@ -119,6 +119,16 @@ async function revoke(consent: ConsentRecord) {
 
 // --- Papiererklärung hinterlegen ------------------------------------------------------------
 
+// Der Zweck entscheidet, wofuer eine Einwilligung gilt: PlayerBoard veroeffentlicht Trainingsfotos
+// nur mit dem Zweck "Website", der Beitragsgenerator braucht "Social Media".
+const purposeOptions = [
+  { value: 'social_media', label: 'Social Media' },
+  { value: 'website', label: 'Vereinswebsite' },
+  { value: 'print', label: 'Printmaterial' },
+  { value: 'internal', label: 'Intern' },
+]
+const PURPOSE_REQUIRED_MESSAGE = 'Bitte mindestens einen Zweck wählen.'
+
 const registerForm = reactive({
   directoryPersonId: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
   purposes: ['social_media'] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
@@ -142,6 +152,7 @@ async function registerConsent() {
   // natives required mehr (reka-ui rendert das versteckte <select> nur mit name-Prop), und die
   // API nimmt eine Erklaerung ohne directoryPersonId klaglos an.
   if (!registerForm.directoryPersonId) { registerError.value = 'Bitte eine Person wählen.'; return }
+  if (registerForm.purposes.length === 0) { registerError.value = PURPOSE_REQUIRED_MESSAGE; return }
   registerSubmitting.value = true
   registerError.value = ''
   try {
@@ -186,6 +197,7 @@ const requestError = ref('')
 async function sendConsentRequest() {
   if (!organizationId.value) return
   if (!requestForm.directoryPersonId) { requestError.value = 'Bitte eine Person wählen.'; return }
+  if (requestForm.purposes.length === 0) { requestError.value = PURPOSE_REQUIRED_MESSAGE; return }
   requestSubmitting.value = true
   requestError.value = ''
   try {
@@ -315,6 +327,10 @@ async function resendRequest(request: ConsentRequest) {
                 </SelectContent>
               </Select>
             </label>
+            <fieldset class="flex flex-wrap gap-3 text-xs">
+              <legend class="mb-1 block text-xs font-semibold">Zweck</legend>
+              <label v-for="purpose in purposeOptions" :key="purpose.value" class="flex items-center gap-1.5"><input v-model="registerForm.purposes" type="checkbox" :value="purpose.value" /> {{ purpose.label }}</label>
+            </fieldset>
             <div class="flex flex-wrap gap-3 text-xs">
               <label class="flex items-center gap-1.5"><input v-model="registerForm.mediaKinds" type="checkbox" value="photo" /> Foto</label>
               <label class="flex items-center gap-1.5"><input v-model="registerForm.mediaKinds" type="checkbox" value="video" /> Video</label>
@@ -361,6 +377,10 @@ async function resendRequest(request: ConsentRequest) {
               <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="self" /> An die Person selbst</label>
               <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="guardian" /> An Erziehungsberechtigte:n</label>
             </div>
+            <fieldset class="flex flex-wrap gap-3 text-xs">
+              <legend class="mb-1 block text-xs font-semibold">Zweck</legend>
+              <label v-for="purpose in purposeOptions" :key="purpose.value" class="flex items-center gap-1.5"><input v-model="requestForm.purposes" type="checkbox" :value="purpose.value" /> {{ purpose.label }}</label>
+            </fieldset>
             <div class="flex flex-wrap gap-3 text-xs">
               <label class="flex items-center gap-1.5"><input v-model="requestForm.mediaKinds" type="checkbox" value="photo" /> Foto</label>
               <label class="flex items-center gap-1.5"><input v-model="requestForm.mediaKinds" type="checkbox" value="video" /> Video</label>
