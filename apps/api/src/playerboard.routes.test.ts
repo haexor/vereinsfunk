@@ -8,6 +8,8 @@ import { DEPARTMENT_ID, ORGANIZATION_ID, TEAM_ID, USER_ID, chain, moduleStatusPr
 // Paket 052, PR 2: PlayerBoard-API. Die Fakes bedienen nur die Lesungen, die eine Route vor ihrer
 // Rechtepruefung braucht (Mannschaft, Training, Foto, Kader-Eintrag ueber den Service-Client) --
 // jede weitere Tabelle wirft, damit ein Schreibzugriff vor der Pruefung im Test auffliegt.
+// Die Datei bleibt vorerst ueber 500 Zeilen, weil alle Routen dieselben strikten Fakes nutzen.
+// Folgeschritt: Fakes in testSupport auslagern, dann Lese-, Schreib- und Einladungsfaelle trennen.
 
 const TRAINING_ID = '52000000-5000-4000-8000-000000000001'
 const PLAYER_ID = '52000000-3000-4000-8000-000000000001'
@@ -146,16 +148,17 @@ describe('PlayerBoard read routes', () => {
     ])
   })
 
-  it('shows e-mail addresses to coaches only', async () => {
+  it('shows e-mail addresses and birth years to coaches only', async () => {
     const roster = { data: [{ player_id: PLAYER_ID, directory_person_id: PERSON_ID, first_name: 'Mia', last_name: 'Keller', jersey_number: 7, position: null, active: true, has_account: false }], error: null }
     const fakes = clients({
       userRpc: { playerboard_can_view_stats: { data: true, error: null }, playerboard_team_roster: roster },
-      serviceTables: { directory_people: [{ id: PERSON_ID, email: 'mia@example.local' }] },
+      serviceTables: { directory_people: [{ id: PERSON_ID, email: 'mia@example.local', birth_year: 2014 }] },
     })
     const asPlayer = await call(await startApp({ roleProvider: rolesProvider(['player']), supabaseClients: fakes }), 'GET', `/v1/playerboard/teams/${TEAM_ID}/players`)
     expect(asPlayer.json()[0]).not.toHaveProperty('email')
+    expect(asPlayer.json()[0]).not.toHaveProperty('birthYear')
     const asCoach = await call(await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes }), 'GET', `/v1/playerboard/teams/${TEAM_ID}/players`)
-    expect(asCoach.json()[0]).toMatchObject({ email: 'mia@example.local', isSelf: false })
+    expect(asCoach.json()[0]).toMatchObject({ email: 'mia@example.local', birthYear: 2014, isSelf: false })
   })
 
   it('marks the squad entry linked to the caller as isSelf', async () => {
@@ -222,6 +225,84 @@ describe('PlayerBoard coach flows', () => {
     expect(calls).toEqual([expect.objectContaining({ name: 'playerboard_create_player', target_team_id: TEAM_ID, target_is_minor: true, target_jersey_number: 7 })])
     expect(response.json()).toMatchObject({ id: PLAYER_ID, firstName: 'Mia', jerseyNumber: 7, email: null })
     expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.created' })])
+  })
+
+  describe('updating the person data of a squad entry', () => {
+    const roster = { data: [{ player_id: PLAYER_ID, directory_person_id: PERSON_ID, first_name: 'Mia', last_name: 'Keller', jersey_number: 7, position: null, active: true, has_account: false }], error: null }
+
+    /** Fake, dessen Service-Client Updates an directory_people mitschreibt und sonst wie clients() antwortet. */
+    function recordingClients(updates: Record<string, unknown>[], audit: Record<string, unknown>[], origin: { source_id: string | null; external_id: string | null } = { source_id: null, external_id: null }) {
+      const person = { id: PERSON_ID, first_name: 'Mia', last_name: 'Keller', email: null, profile_id: null, birth_year: 2014, ...origin }
+      const responseRoster = { data: [{ ...roster.data[0] }], error: null }
+      const fakes = clients({
+        audit, userRpc: { playerboard_team_roster: responseRoster },
+        serviceTables: { directory_people: [person] },
+      })
+      const service = fakes.forService()
+      fakes.forService = () => ({
+        ...service,
+        from: (name: string) => name === 'directory_people'
+          ? {
+              select: (columns: string) => chain({ data: columns.includes('source_id') ? person : [person], error: null }),
+              update: (row: Record<string, unknown>) => {
+                updates.push(row)
+                Object.assign(person, row)
+                Object.assign(responseRoster.data[0]!, { first_name: person.first_name, last_name: person.last_name })
+                return chain({ data: null, error: null })
+              },
+            }
+          : service.from(name),
+      }) as unknown as SupabaseClient
+      return fakes
+    }
+
+    it('writes name and birth year to the directory person and derives minority from the year', async () => {
+      const updates: Record<string, unknown>[] = []
+      const audit: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, audit) })
+      const birthYear = new Date().getFullYear() - 12
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { firstName: 'Mia', lastName: 'Keller-Schmidt', birthYear })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toEqual([expect.objectContaining({ first_name: 'Mia', last_name: 'Keller-Schmidt', birth_year: birthYear, is_minor: true, source_updated_at: expect.any(String) })])
+      expect(response.json()).toMatchObject({ id: PLAYER_ID, lastName: 'Keller-Schmidt', birthYear })
+      expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.updated', metadata: { fields: ['first_name', 'last_name', 'birth_year'] } })])
+    })
+
+    it('keeps the stored minority flag when the birth year is cleared', async () => {
+      const updates: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, []) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { birthYear: null })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toHaveLength(1)
+      expect(updates[0]).toMatchObject({ birth_year: null })
+      expect(updates[0]).not.toHaveProperty('is_minor')
+      expect(response.json()).toMatchObject({ birthYear: null })
+    })
+
+    it.each(['firstName', 'lastName', 'birthYear'] as const)('rejects changing %s of an import without an external ID before any writes', async (field) => {
+      const updates: Record<string, unknown>[] = []
+      const audit: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, audit, { source_id: 'source-1', external_id: null }) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { [field]: field === 'birthYear' ? 2015 : 'Korrigiert', jerseyNumber: 9 })
+      expect(response.statusCode).toBe(409)
+      expect(response.json()).toMatchObject({ error: 'import_identity_required' })
+      expect(updates).toEqual([])
+      expect(audit).toEqual([])
+    })
+
+    it('allows identity corrections when the import has a stable external ID', async () => {
+      const updates: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, [], { source_id: 'source-1', external_id: 'member-1' }) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { lastName: 'Keller-Schmidt' })
+      expect(response.statusCode).toBe(200)
+      expect(response.json()).toMatchObject({ lastName: 'Keller-Schmidt' })
+    })
+
+    it('rejects an empty last name', async () => {
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients([], []) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { lastName: '  ' })
+      expect(response.statusCode).toBe(400)
+    })
   })
 
   it('maps trigger errors of the points RPC to 422', async () => {

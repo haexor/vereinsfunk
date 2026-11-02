@@ -91,9 +91,12 @@ export function createPeopleMatchStrategy(resolver: DepartmentResolver): MatchSt
       return `${entity.firstName} ${entity.lastName}`
     },
     sourceUpdatedAtOf(entity) {
-      return entity.sourceUpdatedAt ? new Date(entity.sourceUpdatedAt) : undefined
+      return entity.sourceUpdatedAt ? new Date(entity.sourceUpdatedAt) : new Date(0)
     },
-    localUpdatedAtOf(local) {
+    localUpdatedAtOf(local, incoming) {
+      // Ohne Quelldatum darf ein Import keinen gespeicherten Korrektur-/Quellstand
+      // ueberschreiben. Undatierte, noch unkorrigierte Importe bleiben aktualisierbar.
+      if (!incoming.sourceUpdatedAt) return local.sourceUpdatedAt ?? undefined
       return local.sourceUpdatedAt ?? local.updatedAt
     },
     unknownStructureRefs(entity) {

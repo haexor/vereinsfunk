@@ -28,26 +28,30 @@ async function loadRoster(client: SupabaseClient, teamId: string): Promise<Roste
   return (roster.data ?? []) as RosterRow[]
 }
 
-type PersonRow = { id: string; email: string | null; profile_id: string | null }
+type PersonRow = { id: string; email: string | null; profile_id: string | null; birth_year: number | null }
 
 /** Laedt E-Mail und verknuepftes Konto der Verzeichnispersonen eines Kaders per Service-Client. */
 async function loadPeople(service: SupabaseClient, rows: readonly RosterRow[]): Promise<Map<string, PersonRow>> {
   if (rows.length === 0) return new Map()
-  const people = await service.from('directory_people').select('id, email, profile_id').in('id', rows.map((row) => row.directory_person_id))
+  const people = await service.from('directory_people').select('id, email, profile_id, birth_year').in('id', rows.map((row) => row.directory_person_id))
   if (people.error) throw people.error
   return new Map((people.data as PersonRow[]).map((person) => [person.id, person]))
 }
 
 /**
  * Validiert einen Kader-Eintrag als API-Antwort. isSelf markiert den Eintrag der aufrufenden Person;
- * die E-Mail wird nur bei expliziter Uebergabe aufgenommen.
+ * E-Mail und Geburtsjahr (Trainerdaten) werden nur bei expliziter Uebergabe aufgenommen.
  */
-function mapRosterRow(teamId: string, row: RosterRow, isSelf: boolean, email?: string | null) {
+function mapRosterRow(teamId: string, row: RosterRow, isSelf: boolean, trainerData?: { email: string | null; birthYear: number | null }) {
   return PlayerboardPlayerSchema.parse({
     id: row.player_id, teamId, directoryPersonId: row.directory_person_id, firstName: row.first_name, lastName: row.last_name,
     jerseyNumber: row.jersey_number, position: row.position, active: row.active, hasAccount: row.has_account, isSelf,
-    ...(email !== undefined ? { email } : {}),
+    ...(trainerData ?? {}),
   })
+}
+
+function trainerDataOf(person: PersonRow | undefined) {
+  return { email: person?.email ?? null, birthYear: person?.birth_year ?? null }
 }
 
 /** Registriert Kaderabfrage, Spielerpflege und Einladungen mit Scope- und Berechtigungspruefung. */
@@ -83,7 +87,7 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     const row = (await loadRoster(client, teamId)).find((candidate) => candidate.player_id === playerId)
     if (!row) throw new Error('player not visible after write')
     const person = (await loadPeople(supabaseClients.forService(), [row])).get(row.directory_person_id)
-    return mapRosterRow(teamId, row, person?.profile_id === request.auth!.userId, person?.email ?? null)
+    return mapRosterRow(teamId, row, person?.profile_id === request.auth!.userId, trainerDataOf(person))
   }
 
   app.get('/v1/playerboard/teams/:teamId/players', async (request, reply) => {
@@ -99,7 +103,7 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     return reply.code(200).send(rows.map((row) => {
       const person = people.get(row.directory_person_id)
       const isSelf = person?.profile_id === request.auth!.userId
-      return canManage ? mapRosterRow(params.teamId, row, isSelf, person?.email ?? null) : mapRosterRow(params.teamId, row, isSelf)
+      return canManage ? mapRosterRow(params.teamId, row, isSelf, trainerDataOf(person)) : mapRosterRow(params.teamId, row, isSelf)
     }))
   })
 
@@ -157,6 +161,21 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     if (!player) return
     if (!(await requirePermission(request, reply, 'training.manage', player.scope))) return
 
+    // Ohne externe ID besteht die Importidentitaet aus Name und Geburtsjahr. Eine
+    // Aenderung wuerde beim naechsten Import eine zweite Person erzeugen.
+    if (input.firstName !== undefined || input.lastName !== undefined || input.birthYear !== undefined) {
+      const existing = await supabaseClients.forService().from('directory_people')
+        .select('first_name, last_name, birth_year, source_id, external_id')
+        .eq('organization_id', player.scope.organizationId).eq('id', player.directoryPersonId).single()
+      if (existing.error) throw existing.error
+      const identityChanged = (input.firstName !== undefined && input.firstName !== existing.data.first_name)
+        || (input.lastName !== undefined && input.lastName !== existing.data.last_name)
+        || (input.birthYear !== undefined && input.birthYear !== existing.data.birth_year)
+      if (identityChanged && existing.data.source_id && !existing.data.external_id) {
+        return reply.code(409).send({ error: 'import_identity_required', correlationId: request.id })
+      }
+    }
+
     const update: Record<string, unknown> = {}
     if (input.jerseyNumber !== undefined) update.jersey_number = input.jerseyNumber
     if (input.position !== undefined) update.position = input.position
@@ -169,16 +188,29 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
       }
       if (result.data.length === 0) return reply.code(403).send({ error: 'forbidden', correlationId: request.id })
     }
-    // Die E-Mail gehoert der Verzeichnisperson (Paket 054). Der Trainer pflegt seinen Kader und darf
-    // sie fuer Personen seines Kaders ergaenzen -- auch ohne directory.read auf deren Scope.
-    if (input.email !== undefined) {
-      const person = await supabaseClients.forService().from('directory_people')
-        .update({ email: input.email, source_updated_at: new Date().toISOString() }).eq('id', player.directoryPersonId)
-      if (person.error) throw person.error
+    // E-Mail, Namen und Geburtsjahr gehoeren der Verzeichnisperson (Paket 054). Der Trainer pflegt
+    // seinen Kader und darf sie fuer Personen seines Kaders aendern -- auch ohne directory.read auf
+    // deren Scope.
+    const person: Record<string, unknown> = {}
+    if (input.email !== undefined) person.email = input.email
+    if (input.firstName !== undefined) person.first_name = input.firstName
+    if (input.lastName !== undefined) person.last_name = input.lastName
+    if (input.birthYear !== undefined) {
+      person.birth_year = input.birthYear
+      // Wie in PATCH /v1/directory-people: is_minor leitet der Server aus dem Geburtsjahr her. Wird
+      // das Jahr entfernt, bleibt die bisherige Einstufung -- das Loeschen darf den Schutz nicht senken.
+      if (input.birthYear !== null) person.is_minor = deriveIsMinor(input.birthYear, new Date().getFullYear())
+    }
+    if (Object.keys(person).length > 0) {
+      // source_updated_at, damit ein spaeterer Sync-Lauf die Korrektur nicht mit aelteren Quelldaten
+      // ueberschreibt (siehe PATCH /v1/directory-people/:id).
+      const saved = await supabaseClients.forService().from('directory_people')
+        .update({ ...person, source_updated_at: new Date().toISOString() }).eq('id', player.directoryPersonId)
+      if (saved.error) throw saved.error
     }
     await recordAuditEvent(request, {
       organizationId: player.scope.organizationId, action: 'playerboard_player.updated', entityType: 'playerboard_players', entityId: params.id,
-      metadata: { fields: [...Object.keys(update), ...(input.email !== undefined ? ['email'] : [])] },
+      metadata: { fields: [...Object.keys(update), ...Object.keys(person).filter((field) => field !== 'is_minor')] },
     })
     return reply.code(200).send(await playerResponse(request, player.scope.teamId, params.id))
   })

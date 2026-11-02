@@ -112,12 +112,15 @@ async function createPlayer() {
 // --- Bearbeiten --------------------------------------------------------------------------------
 
 const editingId = ref<string | null>(null)
-const editForm = reactive({ jerseyNumber: '', position: '', email: '', active: true })
+const editForm = reactive({ firstName: '', lastName: '', birthYear: '', jerseyNumber: '', position: '', email: '', active: true })
 const busyId = ref<string | null>(null)
 
 function startEdit(player: PlayerboardPlayer) {
   editingId.value = player.id
   invitingId.value = null
+  editForm.firstName = player.firstName
+  editForm.lastName = player.lastName
+  editForm.birthYear = player.birthYear == null ? '' : String(player.birthYear)
   editForm.jerseyNumber = player.jerseyNumber === null ? '' : String(player.jerseyNumber)
   editForm.position = player.position ?? ''
   editForm.email = player.email ?? ''
@@ -130,9 +133,21 @@ async function saveEdit(player: PlayerboardPlayer) {
   busyId.value = player.id
   actionError.value = ''
   try {
+    // Namen und Geburtsjahr nur senden, wenn sie sich geaendert haben: die API markiert sie an der
+    // Verzeichnisperson sonst als lokal neuer als die Sync-Quelle.
+    const firstName = editForm.firstName.trim()
+    const lastName = editForm.lastName.trim()
+    const birthYear = optionalNumber(editForm.birthYear)
+    const email = editForm.email.trim() || null
+    const person = {
+      ...(firstName !== player.firstName ? { firstName } : {}),
+      ...(lastName !== player.lastName ? { lastName } : {}),
+      ...(birthYear !== (player.birthYear ?? null) ? { birthYear } : {}),
+      ...(email !== (player.email ?? null) ? { email } : {}),
+    }
     replacePlayer(await api.request(`/v1/playerboard/players/${player.id}`, {
       method: 'PATCH',
-      body: { jerseyNumber: optionalNumber(editForm.jerseyNumber), position: editForm.position.trim() || null, email: editForm.email.trim() || null, active: editForm.active },
+      body: { ...person, jerseyNumber: optionalNumber(editForm.jerseyNumber), position: editForm.position.trim() || null, active: editForm.active },
     }, PlayerboardPlayerSchema))
     editingId.value = null
   } catch (error) {
@@ -280,6 +295,9 @@ const labelClass = 'grid gap-1.5 text-xs font-semibold text-[#5b625d]'
                 </form>
 
                 <form v-if="editingId === player.id" class="mt-3 grid gap-3 sm:grid-cols-2 lg:grid-cols-4" @submit.prevent="saveEdit(player)">
+                  <label :class="labelClass">Vorname<input v-model="editForm.firstName" required maxlength="80" :class="inputClass" /></label>
+                  <label :class="labelClass">Nachname<input v-model="editForm.lastName" required maxlength="80" :class="inputClass" /></label>
+                  <label :class="labelClass">Geburtsjahr <span class="font-normal text-[#9aa096]">optional</span><input v-model="editForm.birthYear" type="number" inputmode="numeric" min="1900" max="2100" :class="inputClass" /></label>
                   <label :class="labelClass">Rückennummer<input v-model="editForm.jerseyNumber" type="number" inputmode="numeric" min="0" max="99" :class="inputClass" /></label>
                   <label :class="labelClass">Position<input v-model="editForm.position" maxlength="40" :class="inputClass" /></label>
                   <label :class="labelClass">E-Mail<input v-model="editForm.email" type="email" autocomplete="off" :class="inputClass" /></label>
