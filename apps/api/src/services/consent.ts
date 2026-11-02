@@ -14,11 +14,17 @@ import { toPermissionScope } from './scopeAuthorization.js'
 // Bereitgestellte Vorlage, bis ein Verein einen eigenen Text hinterlegt (Plan 015, "Einwilligungstext
 // pro Verein editierbar"). Anwaltliche Pruefung ist Voraussetzung fuer den Produktivbetrieb, siehe
 // plans/README.md "Entschiedene Produktfragen" -- diese Vorlage ist ein Platzhalter, kein Rechtstext.
-export const DEFAULT_CONSENT_TEXT_TEMPLATE = `Einwilligung zur Veröffentlichung von Fotos und Videos in sozialen Medien
+const LEGACY_CONSENT_TEXT_TEMPLATE = `Einwilligung zur Veröffentlichung von Fotos und Videos in sozialen Medien
 
 Der Verein möchte über sein Vereinsleben berichten und dafür auch Fotos und Videos auf seinen Social-Media-Kanälen veröffentlichen. Mit dieser Einwilligung bestätigen Sie, dass Fotos und Videos im hier beschriebenen Umfang veröffentlicht werden dürfen.
 
 Diese Einwilligung ist freiwillig. Sie können sie jederzeit ohne Angabe von Gründen für die Zukunft widerrufen; das beeinträchtigt nicht die Rechtmäßigkeit der bis zum Widerruf erfolgten Veröffentlichungen.`
+
+export const DEFAULT_CONSENT_TEXT_TEMPLATE = `Einwilligung zur Nutzung von Fotos und Videos
+
+Der Verein möchte Fotos und Videos für die in dieser Anfrage ausdrücklich ausgewählten Zwecke nutzen. Je nach ausgewähltem Umfang sind das Social Media, die Vereinswebsite, Printmaterial oder die interne Nutzung. Ihre Einwilligung gilt ausschließlich für die unten aufgeführten Zwecke, Medienarten und weiteren Angaben zum Umfang.
+
+Diese Einwilligung ist freiwillig. Sie können sie jederzeit ohne Angabe von Gründen für die Zukunft widerrufen; das beeinträchtigt nicht die Rechtmäßigkeit der bis zum Widerruf erfolgten Nutzung.`
 
 export const CONSENT_REQUEST_SELECT =
   'id, organization_id, department_id, directory_person_id, recipient_email, recipient_role, requested_scope, text_version, status, expires_at, responded_at, consent_record_id, send_count, last_sent_at, created_by, created_at'
@@ -159,8 +165,8 @@ export function consentRequestExpiresAt(now: Date): string {
 export function buildConsentRequestEmail(options: { to: string; organizationName: string; personLabel: string; respondUrl: string }): EmailMessage {
   return {
     to: options.to,
-    subject: `Einwilligung zur Veröffentlichung von Fotos/Videos – ${options.organizationName}`,
-    text: `${options.organizationName} bittet um Ihre Einwilligung zur Veröffentlichung von Fotos/Videos von ${options.personLabel} in sozialen Medien.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist ${CONSENT_REQUEST_VALID_DAYS} Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
+    subject: `Einwilligung zur Nutzung von Fotos/Videos – ${options.organizationName}`,
+    text: `${options.organizationName} bittet um Ihre Einwilligung zur Nutzung von Fotos/Videos von ${options.personLabel}. Die angefragten Zwecke und der genaue Umfang stehen auf der verlinkten Seite.\n\nZur Anfrage: ${options.respondUrl}\n\nDer Link ist ${CONSENT_REQUEST_VALID_DAYS} Tage gültig. Eine Einwilligung ist freiwillig und jederzeit für die Zukunft widerrufbar.`,
   }
 }
 
@@ -172,12 +178,13 @@ export function shortPersonLabel(firstName: string, lastName: string): string {
 }
 
 // text_version einer Anfrage, solange der Verein keinen eigenen Text hinterlegt hat.
-export const DEFAULT_CONSENT_TEXT_VERSION = 'default-template'
+export const DEFAULT_CONSENT_TEXT_VERSION = 'default-template-v2'
 
 // Der Nachweis einer digitalen Einwilligung ist, WELCHEN Text jemand bestaetigt hat (Plan 015) --
 // die oeffentliche Seite zeigt deshalb die bei Anlage der Anfrage festgehaltene Fassung, nicht
 // die inzwischen vielleicht ersetzte aktuelle. Fassungen sind append-only und damit stabil.
 export async function consentTextForVersion(client: SupabaseClient, organizationId: string, textVersion: string): Promise<string> {
+  if (textVersion === 'default-template') return LEGACY_CONSENT_TEXT_TEMPLATE
   if (textVersion === DEFAULT_CONSENT_TEXT_VERSION) return DEFAULT_CONSENT_TEXT_TEMPLATE
   const text = await client.from('organization_consent_texts').select('body').eq('organization_id', organizationId).eq('id', textVersion).single()
   if (text.error) throw text.error

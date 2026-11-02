@@ -112,7 +112,7 @@ if (import.meta.client) await load()
     </template>
 
     <template v-else-if="view">
-      <h1 class="font-display text-xl font-extrabold tracking-[-.03em]">Einwilligung zur Veröffentlichung</h1>
+      <h1 class="font-display text-xl font-extrabold tracking-[-.03em]">Einwilligung zur Nutzung von Fotos und Videos</h1>
       <p class="mt-2 text-sm text-[#6c756f]">{{ view.organizationName }} bittet um deine Einwilligung für {{ view.personLabel }}.</p>
 
       <div class="mt-5 max-h-64 overflow-y-auto rounded-xl border border-[#dfe0d9] p-4 text-left text-sm text-ink">
