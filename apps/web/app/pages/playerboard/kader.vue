@@ -138,14 +138,16 @@ async function saveEdit(player: PlayerboardPlayer) {
     const firstName = editForm.firstName.trim()
     const lastName = editForm.lastName.trim()
     const birthYear = optionalNumber(editForm.birthYear)
+    const email = editForm.email.trim() || null
     const person = {
       ...(firstName !== player.firstName ? { firstName } : {}),
       ...(lastName !== player.lastName ? { lastName } : {}),
       ...(birthYear !== (player.birthYear ?? null) ? { birthYear } : {}),
+      ...(email !== (player.email ?? null) ? { email } : {}),
     }
     replacePlayer(await api.request(`/v1/playerboard/players/${player.id}`, {
       method: 'PATCH',
-      body: { ...person, jerseyNumber: optionalNumber(editForm.jerseyNumber), position: editForm.position.trim() || null, email: editForm.email.trim() || null, active: editForm.active },
+      body: { ...person, jerseyNumber: optionalNumber(editForm.jerseyNumber), position: editForm.position.trim() || null, active: editForm.active },
     }, PlayerboardPlayerSchema))
     editingId.value = null
   } catch (error) {

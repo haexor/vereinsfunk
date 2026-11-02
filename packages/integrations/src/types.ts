@@ -60,7 +60,7 @@ export interface MatchStrategy<TLocal, TExternal> {
   /** Anzeigename für Konfliktzeilen (Personenname, Termintitel, ...). */
   labelOf(entity: TLocal | TExternal): string
   sourceUpdatedAtOf(entity: TExternal): Date | undefined
-  localUpdatedAtOf(local: TLocal): Date | undefined
+  localUpdatedAtOf(local: TLocal, incoming: TExternal): Date | undefined
   /**
    * Bereichsspezifische Struktur-Prüfung (z. B. unbekannte Abteilung). planSync kennt die
    * Fachstruktur nicht, ruft diesen optionalen Hook aber für den Konflikttyp 'unknown_structure'

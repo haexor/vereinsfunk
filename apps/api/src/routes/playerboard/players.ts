@@ -161,6 +161,21 @@ export function registerPlayerboardPlayerRoutes(app: FastifyInstance, context: A
     if (!player) return
     if (!(await requirePermission(request, reply, 'training.manage', player.scope))) return
 
+    // Ohne externe ID besteht die Importidentitaet aus Name und Geburtsjahr. Eine
+    // Aenderung wuerde beim naechsten Import eine zweite Person erzeugen.
+    if (input.firstName !== undefined || input.lastName !== undefined || input.birthYear !== undefined) {
+      const existing = await supabaseClients.forService().from('directory_people')
+        .select('first_name, last_name, birth_year, source_id, external_id')
+        .eq('organization_id', player.scope.organizationId).eq('id', player.directoryPersonId).single()
+      if (existing.error) throw existing.error
+      const identityChanged = (input.firstName !== undefined && input.firstName !== existing.data.first_name)
+        || (input.lastName !== undefined && input.lastName !== existing.data.last_name)
+        || (input.birthYear !== undefined && input.birthYear !== existing.data.birth_year)
+      if (identityChanged && existing.data.source_id && !existing.data.external_id) {
+        return reply.code(409).send({ error: 'import_identity_required', correlationId: request.id })
+      }
+    }
+
     const update: Record<string, unknown> = {}
     if (input.jerseyNumber !== undefined) update.jersey_number = input.jerseyNumber
     if (input.position !== undefined) update.position = input.position
