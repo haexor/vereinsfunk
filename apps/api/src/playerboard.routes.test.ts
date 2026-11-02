@@ -224,6 +224,54 @@ describe('PlayerBoard coach flows', () => {
     expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.created' })])
   })
 
+  describe('updating the person data of a squad entry', () => {
+    const roster = { data: [{ player_id: PLAYER_ID, directory_person_id: PERSON_ID, first_name: 'Mia', last_name: 'Keller', jersey_number: 7, position: null, active: true, has_account: false }], error: null }
+
+    /** Fake, dessen Service-Client Updates an directory_people mitschreibt und sonst wie clients() antwortet. */
+    function recordingClients(updates: Record<string, unknown>[], audit: Record<string, unknown>[]) {
+      const fakes = clients({
+        audit, userRpc: { playerboard_team_roster: roster },
+        serviceTables: { directory_people: [{ id: PERSON_ID, email: null, profile_id: null, birth_year: 2014 }] },
+      })
+      const service = fakes.forService()
+      fakes.forService = () => ({
+        ...service,
+        from: (name: string) => name === 'directory_people'
+          ? { select: (columns: string) => (service.from('directory_people') as unknown as { select: (c: string) => unknown }).select(columns), update: (row: Record<string, unknown>) => { updates.push(row); return chain({ data: null, error: null }) } }
+          : service.from(name),
+      }) as unknown as SupabaseClient
+      return fakes
+    }
+
+    it('writes name and birth year to the directory person and derives minority from the year', async () => {
+      const updates: Record<string, unknown>[] = []
+      const audit: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, audit) })
+      const birthYear = new Date().getFullYear() - 12
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { firstName: 'Mia', lastName: 'Keller-Schmidt', birthYear })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toEqual([expect.objectContaining({ first_name: 'Mia', last_name: 'Keller-Schmidt', birth_year: birthYear, is_minor: true, source_updated_at: expect.any(String) })])
+      expect(response.json()).toMatchObject({ id: PLAYER_ID, birthYear: 2014 })
+      expect(audit).toEqual([expect.objectContaining({ action: 'playerboard_player.updated', metadata: { fields: ['first_name', 'last_name', 'birth_year'] } })])
+    })
+
+    it('keeps the stored minority flag when the birth year is cleared', async () => {
+      const updates: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients(updates, []) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { birthYear: null })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toHaveLength(1)
+      expect(updates[0]).toMatchObject({ birth_year: null })
+      expect(updates[0]).not.toHaveProperty('is_minor')
+    })
+
+    it('rejects an empty last name', async () => {
+      const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: recordingClients([], []) })
+      const response = await call(app, 'PATCH', `/v1/playerboard/players/${PLAYER_ID}`, { lastName: '  ' })
+      expect(response.statusCode).toBe(400)
+    })
+  })
+
   it('maps trigger errors of the points RPC to 422', async () => {
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),

@@ -34,6 +34,8 @@ export const PlayerboardPlayerSchema = z.object({
   isSelf: z.boolean(),
   // Nur fuer Trainer (training.manage) -- Spieler sehen keine E-Mail-Adressen ihrer Mitspieler.
   email: z.string().nullable().optional(),
+  // Wie die E-Mail nur fuer Trainer: das Geburtsjahr ist Personenstammdatum, kein Mannschaftsinhalt.
+  birthYear: z.int().nullable().optional(),
 })
 
 // Entweder eine neue Person (die Verzeichnisperson entsteht im Hintergrund in der Mannschaft) oder
@@ -57,6 +59,10 @@ export const CreatePlayerboardPlayerRequestSchema = z.union([
 ])
 
 export const UpdatePlayerboardPlayerRequestSchema = z.object({
+  // Namen und Geburtsjahr gehoeren der Verzeichnisperson (wie die E-Mail).
+  firstName: z.string().trim().min(1).max(80).optional(),
+  lastName: z.string().trim().min(1).max(80).optional(),
+  birthYear: z.int().min(1900).max(2100).nullable().optional(),
   jerseyNumber: JerseyNumberSchema.nullable().optional(),
   position: PositionSchema.nullable().optional(),
   active: z.boolean().optional(),
