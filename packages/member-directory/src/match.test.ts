@@ -32,6 +32,21 @@ function localPerson(overrides: Partial<DirectoryPersonLocal> = {}): DirectoryPe
 }
 
 describe('createPeopleMatchStrategy with planSync', () => {
+  it.each([null, new Date('2026-06-01T00:00:00Z')])('protects a stored correction from an undated import (stored timestamp: %s)', (sourceUpdatedAt) => {
+    const plan = planSync({
+      existing: [localPerson({ sourceUpdatedAt })],
+      incoming: [PersonExternalSchema.parse({ externalId: 'ext-1', firstName: 'Anna', lastName: 'Meyer', birthYear: 2011 })],
+      match: createPeopleMatchStrategy(resolver()),
+      policy: { lossThresholdPercent: 30 },
+    })
+    expect(plan.aborted).toBe(false)
+    if (plan.aborted) return
+    expect(plan.updated).toHaveLength(sourceUpdatedAt === null ? 1 : 0)
+    expect(plan.skipped).toEqual(sourceUpdatedAt === null ? [] : [expect.objectContaining({ reason: 'local_newer' })])
+    expect(plan.created).toEqual([])
+    expect(plan.retired).toEqual([])
+  })
+
   it('resolves a known department name and detects a changed field', () => {
     const external = PersonExternalSchema.parse({
       externalId: 'ext-1', firstName: 'Anna', lastName: 'Meyer', departmentName: 'Fußball',

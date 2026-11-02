@@ -3,7 +3,11 @@ import { UpdatePlayerboardPlayerRequestSchema } from './index.js'
 
 describe('UpdatePlayerboardPlayerRequestSchema', () => {
   it('accepts name and birth year changes and trims the names', () => {
-    const parsed = UpdatePlayerboardPlayerRequestSchema.parse({ firstName: ' Mia ', lastName: ' Keller ', birthYear: 2014 })
+    const parsed = UpdatePlayerboardPlayerRequestSchema.parse({
+      firstName: ' Mia ',
+      lastName: ' Keller ',
+      birthYear: 2014,
+    })
     expect(parsed).toEqual({ firstName: 'Mia', lastName: 'Keller', birthYear: 2014 })
   })
 

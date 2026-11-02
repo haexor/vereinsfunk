@@ -53,7 +53,7 @@ export function planSync<TLocal, TExternal>(input: {
       skipped.push({ local, external, reason: 'unchanged' })
       return
     }
-    const localUpdatedAt = match.localUpdatedAtOf(local)
+    const localUpdatedAt = match.localUpdatedAtOf(local, external)
     const sourceUpdatedAt = match.sourceUpdatedAtOf(external)
     if (localUpdatedAt && sourceUpdatedAt && localUpdatedAt > sourceUpdatedAt) {
       // Lokale Korrektur gewinnt komplett gegen eine ältere Quelle -- keine Teilübernahme
