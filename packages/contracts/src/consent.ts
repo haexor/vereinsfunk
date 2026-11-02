@@ -133,7 +133,7 @@ export const PublicConsentRevocationViewSchema = z.object({
 
 // Text pro Verein editierbar, nie global (Entscheidung 2026-08-08). id dient als text_version --
 // unveraenderlich, eine Aenderung legt eine neue Zeile an. id ist keine UUID: ohne eigenen Text
-// liefert die API die feste Kennung 'default-template', dieselbe, die POST /v1/consent-requests
+// liefert die API eine versionierte Standardkennung, dieselbe, die POST /v1/consent-requests
 // dann in consent_requests.text_version speichert.
 export const OrganizationConsentTextSchema = z.object({
   id: z.string(),
