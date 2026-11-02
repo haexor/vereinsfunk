@@ -15,6 +15,18 @@ describe('Einwilligungen', () => {
     expect(fileInput).not.toContain('required')
   })
 
+  it('laesst den Zweck einer Einwilligung in beiden Formularen waehlen', () => {
+    const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
+
+    // Vorher war der Zweck fest 'social_media': eine ueber die Oberflaeche erfasste Einwilligung
+    // konnte nie fuer die Website gelten, PlayerBoard-Fotos blieben deshalb immer intern.
+    expect(page).toContain("{ value: 'website', label: 'Vereinswebsite' }")
+    expect(page).toContain('v-model="registerForm.purposes"')
+    expect(page).toContain('v-model="requestForm.purposes"')
+    expect(page).toContain('if (registerForm.purposes.length === 0)')
+    expect(page).toContain('if (requestForm.purposes.length === 0)')
+  })
+
   it('laesst eine veraltete Ladung auch im Fehlerfall nichts mehr schreiben', () => {
     const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
 
