@@ -327,7 +327,9 @@ async function resendRequest(request: ConsentRequest) {
                 </SelectContent>
               </Select>
             </label>
-            <fieldset class="flex flex-wrap gap-3 text-xs">
+            <fieldset class="flex flex-wrap gap-3 text-xs"
+              :aria-invalid="registerError === PURPOSE_REQUIRED_MESSAGE && registerForm.purposes.length === 0"
+              :aria-describedby="registerError === PURPOSE_REQUIRED_MESSAGE && registerForm.purposes.length === 0 ? 'register-consent-error' : undefined">
               <legend class="mb-1 block text-xs font-semibold">Zweck</legend>
               <label v-for="purpose in purposeOptions" :key="purpose.value" class="flex items-center gap-1.5"><input v-model="registerForm.purposes" type="checkbox" :value="purpose.value" /> {{ purpose.label }}</label>
             </fieldset>
@@ -352,7 +354,7 @@ async function resendRequest(request: ConsentRequest) {
             <label><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP) <span class="font-normal text-[#7b827d]">(optional)</span></span>
               <input :key="registerFileInputKey" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
             </label>
-            <p v-if="registerError" class="text-xs text-amber-800">{{ registerError }}</p>
+            <p v-if="registerError" id="register-consent-error" role="alert" class="text-xs text-amber-800">{{ registerError }}</p>
             <button type="submit" :disabled="registerSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
               {{ registerSubmitting ? 'Wird hinterlegt …' : 'Hinterlegen' }}
             </button>
@@ -377,7 +379,9 @@ async function resendRequest(request: ConsentRequest) {
               <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="self" /> An die Person selbst</label>
               <label class="flex items-center gap-1.5"><input v-model="requestForm.recipientRole" type="radio" name="recipientRole" value="guardian" /> An Erziehungsberechtigte:n</label>
             </div>
-            <fieldset class="flex flex-wrap gap-3 text-xs">
+            <fieldset class="flex flex-wrap gap-3 text-xs"
+              :aria-invalid="requestError === PURPOSE_REQUIRED_MESSAGE && requestForm.purposes.length === 0"
+              :aria-describedby="requestError === PURPOSE_REQUIRED_MESSAGE && requestForm.purposes.length === 0 ? 'request-consent-error' : undefined">
               <legend class="mb-1 block text-xs font-semibold">Zweck</legend>
               <label v-for="purpose in purposeOptions" :key="purpose.value" class="flex items-center gap-1.5"><input v-model="requestForm.purposes" type="checkbox" :value="purpose.value" /> {{ purpose.label }}</label>
             </fieldset>
@@ -386,7 +390,7 @@ async function resendRequest(request: ConsentRequest) {
               <label class="flex items-center gap-1.5"><input v-model="requestForm.mediaKinds" type="checkbox" value="video" /> Video</label>
               <label class="flex items-center gap-1.5"><input v-model="requestForm.namingAllowed" type="checkbox" /> Namentliche Nennung erlaubt</label>
             </div>
-            <p v-if="requestError" class="text-xs text-amber-800">{{ requestError }}</p>
+            <p v-if="requestError" id="request-consent-error" role="alert" class="text-xs text-amber-800">{{ requestError }}</p>
             <button type="submit" :disabled="requestSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
               {{ requestSubmitting ? 'Wird gesendet …' : 'Anfrage senden' }}
             </button>
