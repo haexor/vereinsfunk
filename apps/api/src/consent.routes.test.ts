@@ -525,7 +525,7 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
         from: (table: string) => {
           if (table === 'consent_records') return {
             select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null }),
-            insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }) }) },
+            insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) },
             update: () => chain({ data: { id: CONSENT_ID }, error: null }),
           }
           if (table === 'audit_events') return { insert: async () => ({ error: null }) }
