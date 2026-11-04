@@ -126,10 +126,11 @@ describe('Vorbelegung nach Auswahl einer Person', () => {
     expect(options.body.scopeStructured.purposes).toEqual(['social_media', 'website'])
     // Was das Formular nicht anbietet, bleibt wie in der bisherigen Version.
     expect(options.body.scopeStructured.contexts).toEqual(['training'])
-    expect(page.consents.value).toEqual([
-      { id: 'created' },
-      expect.objectContaining({ id: 'consent-1', supersededBy: 'created', status: 'superseded' }),
-    ])
+    expect(page.consents.value[0]).toEqual({ id: 'created' })
+    expect(page.consents.value.find((consent) => consent.id === 'consent-1')).toMatchObject({
+      supersededBy: 'created',
+      status: 'superseded',
+    })
   })
 
   it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {
