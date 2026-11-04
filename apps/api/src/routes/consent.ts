@@ -5,6 +5,7 @@ import {
   SupersedeConsentRequestSchema,
   UpdateOrganizationConsentTextRequestSchema,
   UuidSchema,
+  type ConsentScope,
 } from '@vereinsfunk/contracts'
 import type { FastifyInstance } from 'fastify'
 import { randomUUID } from 'node:crypto'
@@ -26,6 +27,22 @@ import {
 } from './shared.js'
 import { isAnyMemberOfOrganization, resolveDirectoryScope, toPermissionScope } from '../services/scopeAuthorization.js'
 import { fetchAllRows, fetchAllRowsForIds } from '../supabase.js'
+
+function sameConsentScope(left: ConsentScope, right: ConsentScope): boolean {
+  const sameSet = (a: readonly string[] | null, b: readonly string[] | null): boolean => {
+    if (a === null || b === null) return a === b
+    const sortedA = [...a].sort()
+    const sortedB = [...b].sort()
+    return sortedA.length === sortedB.length && sortedA.every((value, index) => value === sortedB[index])
+  }
+
+  return sameSet(left.purposes, right.purposes)
+    && sameSet(left.platforms, right.platforms)
+    && sameSet(left.mediaKinds, right.mediaKinds)
+    && sameSet(left.contexts, right.contexts)
+    && left.namingAllowed === right.namingAllowed
+    && sameSet(left.departmentIds, right.departmentIds)
+}
 
 export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, requirePermissionAnyOf, supabaseClients } = context
@@ -318,7 +335,11 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
         organization_id: loaded.row.organization_id,
         directory_person_id: loaded.row.directory_person_id,
         pseudonymous_subject_ref: loaded.row.pseudonymous_subject_ref,
-        scope: input.scope ?? describeConsentScope(input.scopeStructured).join(' '),
+        scope: input.scope ?? (
+          sameConsentScope(loaded.row.scope_structured as ConsentScope, input.scopeStructured)
+            ? loaded.row.scope
+            : describeConsentScope(input.scopeStructured).join(' ')
+        ),
         scope_structured: input.scopeStructured,
         origin: loaded.row.origin,
         evidence_bucket: evidenceOfOriginal.data.evidence_bucket,

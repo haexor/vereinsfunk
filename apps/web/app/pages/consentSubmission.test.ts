@@ -86,6 +86,17 @@ describe('consent purpose submissions', () => {
       'Bitte mindestens einen Zweck wählen.',
     )
   })
+
+  it('explains and blocks a paper consent without a media kind', async () => {
+    const { page, request } = await consentPage()
+    page.registerForm.directoryPersonId = 'person-1'
+    page.registerForm.mediaKinds = []
+
+    await page.registerConsent()
+
+    expect(request).not.toHaveBeenCalled()
+    expect(page.registerError.value).toBe('Bitte mindestens eine Medienart auswählen.')
+  })
 })
 
 function storedConsent(overrides: Partial<contracts.ConsentRecord>): contracts.ConsentRecord {
@@ -115,6 +126,10 @@ describe('Vorbelegung nach Auswahl einer Person', () => {
     expect(options.body.scopeStructured.purposes).toEqual(['social_media', 'website'])
     // Was das Formular nicht anbietet, bleibt wie in der bisherigen Version.
     expect(options.body.scopeStructured.contexts).toEqual(['training'])
+    expect(page.consents.value).toEqual([
+      { id: 'created' },
+      expect.objectContaining({ id: 'consent-1', supersededBy: 'created', status: 'superseded' }),
+    ])
   })
 
   it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {

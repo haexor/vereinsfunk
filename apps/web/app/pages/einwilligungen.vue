@@ -104,6 +104,7 @@ function formatDate(value: string): string {
 }
 
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
+const MEDIA_KIND_REQUIRED_MESSAGE = 'Bitte mindestens eine Medienart auswählen.'
 function errorCodeOf(error: unknown): string | undefined {
   return error instanceof ApiRequestError ? error.code : undefined
 }
@@ -167,6 +168,7 @@ async function registerConsent() {
   // API nimmt eine Erklaerung ohne directoryPersonId klaglos an.
   if (!registerForm.directoryPersonId) { registerError.value = 'Bitte eine Person wählen.'; return }
   if (registerForm.purposes.length === 0) { registerError.value = PURPOSE_REQUIRED_MESSAGE; return }
+  if (registerForm.mediaKinds.length === 0) { registerError.value = MEDIA_KIND_REQUIRED_MESSAGE; return }
   registerSubmitting.value = true
   registerError.value = ''
   const previous = registerSupersedes.value
