@@ -5,6 +5,7 @@ import { ModuleKind, ScriptTarget, transpileModule } from 'typescript'
 import { computed, reactive, ref, watch, type Ref } from 'vue'
 import { describe, expect, it, vi } from 'vitest'
 import { ApiRequestError } from '../utils/apiClient'
+import * as consentPurposes from '../utils/consentPurposes'
 
 // Execute the page's actual handlers with Vue state; only Nuxt services and HTTP are replaced.
 // No browser/mount harness is configured in this package.
@@ -28,6 +29,7 @@ async function consentPage() {
       require: (name: string) => {
         if (name === '@vereinsfunk/contracts') return contracts
         if (name === '../utils/apiClient') return { ApiRequestError }
+        if (name === '../utils/consentPurposes') return consentPurposes
         throw new Error(`Unexpected page dependency: ${name}`)
       },
       useApiClient: () => ({ request }),

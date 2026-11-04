@@ -70,6 +70,8 @@ Blocker: `revoked`, `superseded`, `not_yet_valid`, `expired`, `guardian_missing`
 
 `superseded` gehört zwingend dazu und wäre leicht zu vergessen: weil eine Einwilligung nie bearbeitet, sondern verkettet wird, bleibt die alte Zeile mit ihrem alten — womöglich weiteren — Umfang gültig, solange nichts sie ausschließt. Gültig ist ausschließlich die Zeile am Ende der Kette. Eine Auswertung, die eine Zeile mit gesetztem `superseded_by` akzeptiert, veröffentlicht auf Grundlage einer zurückgezogenen Fassung.
 
+Seit 2026-11-04 bietet die Einwilligungsseite dafür „Bearbeiten“ an: Zweck, Medienart, namentliche Nennung, Unterschriftsdatum und unterzeichnende Person einer Papiererklärung lassen sich ändern, gespeichert wird über `POST /v1/consents/:id/supersede` als neue Version. Plattformen, Anlässe und Abteilungen übernimmt die neue Version unverändert. Digital erteilte Einwilligungen bleiben ausgenommen, weil deren Umfang die Person selbst gewählt hat.
+
 `person_left` ist der Grund, warum Paket 014 vorausgeht: verlässt eine Person den Verein, ist die Grundlage für weitere Veröffentlichung in der Regel entfallen. Ob dies eine Einwilligung automatisch beendet, ist eine bewusste Vereinsentscheidung und wird als Richtlinie in `policy_settings` abgebildet (`consent_expires_on_leave boolean`), nicht fest verdrahtet. Bereits veröffentlichte Beiträge werden davon nicht rückwirkend rechtswidrig, aber neue Verwendung wird blockiert.
 
 ## Datenmodell

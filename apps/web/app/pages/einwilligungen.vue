@@ -9,6 +9,7 @@ import {
   type DirectoryPerson,
 } from '@vereinsfunk/contracts'
 import { ApiRequestError } from '../utils/apiClient'
+import { CONSENT_PURPOSE_OPTIONS, PURPOSE_REQUIRED_MESSAGE } from '../utils/consentPurposes'
 
 const api = useApiClient()
 const { organizationId, organization } = await useActiveScope()
@@ -117,17 +118,26 @@ async function revoke(consent: ConsentRecord) {
   }
 }
 
+// --- Bearbeiten (Abloesung) -----------------------------------------------------------------
+
+// Nur Papiererklaerungen: dort uebertraegt der Verein selbst, was auf dem Formular steht. Den Umfang
+// einer digital erteilten Einwilligung hat die Person selbst gewaehlt; ihn darf der Verein nicht
+// nachtraeglich erweitern.
+const editingId = ref<string | null>(null)
+function canEdit(consent: ConsentRecord): boolean {
+  return consent.origin === 'paper' && !consent.revokedAt && !consent.supersededBy
+}
+function onConsentEdited(previousId: string, successor: ConsentRecord) {
+  consents.value = [
+    successor,
+    ...consents.value.map((item) => (item.id === previousId ? { ...item, supersededBy: successor.id, status: 'superseded' as const } : item)),
+  ]
+  editingId.value = null
+}
+
 // --- Papiererklärung hinterlegen ------------------------------------------------------------
 
-// Der Zweck entscheidet, wofuer eine Einwilligung gilt: PlayerBoard veroeffentlicht Trainingsfotos
-// nur mit dem Zweck "Website", der Beitragsgenerator braucht "Social Media".
-const purposeOptions = [
-  { value: 'social_media', label: 'Social Media' },
-  { value: 'website', label: 'Vereinswebsite' },
-  { value: 'print', label: 'Printmaterial' },
-  { value: 'internal', label: 'Intern' },
-]
-const PURPOSE_REQUIRED_MESSAGE = 'Bitte mindestens einen Zweck wählen.'
+const purposeOptions = CONSENT_PURPOSE_OPTIONS
 
 const registerForm = reactive({
   directoryPersonId: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
@@ -288,15 +298,26 @@ async function resendRequest(request: ConsentRequest) {
                 {{ STATUS_LABELS[consent.status] }}
               </span>
             </div>
-            <button
-              v-if="!consent.revokedAt && !consent.supersededBy"
-              type="button" :disabled="revokingId === consent.id"
-              class="focus-ring shrink-0 rounded-lg border border-amber-300 px-3 py-1.5 text-[11px] font-semibold text-amber-800 disabled:opacity-60"
-              @click="revoke(consent)"
-            >
-              {{ revokingId === consent.id ? 'Wird widerrufen …' : 'Widerrufen' }}
-            </button>
+            <div class="flex shrink-0 gap-2">
+              <button
+                v-if="canEdit(consent) && editingId !== consent.id"
+                type="button"
+                class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
+                @click="editingId = consent.id"
+              >
+                Bearbeiten
+              </button>
+              <button
+                v-if="!consent.revokedAt && !consent.supersededBy"
+                type="button" :disabled="revokingId === consent.id"
+                class="focus-ring rounded-lg border border-amber-300 px-3 py-1.5 text-[11px] font-semibold text-amber-800 disabled:opacity-60"
+                @click="revoke(consent)"
+              >
+                {{ revokingId === consent.id ? 'Wird widerrufen …' : 'Widerrufen' }}
+              </button>
+            </div>
           </div>
+          <ConsentEditForm v-if="editingId === consent.id" :consent="consent" @saved="onConsentEdited(consent.id, $event)" @cancel="editingId = null" />
         </div>
         <p v-if="!consents.length" class="p-8 text-center text-xs text-[#9aa096]">Noch keine Einwilligungen erfasst.</p>
       </section>

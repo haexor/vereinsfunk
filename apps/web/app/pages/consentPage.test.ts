@@ -20,11 +20,25 @@ describe('Einwilligungen', () => {
 
     // Vorher war der Zweck fest 'social_media': eine ueber die Oberflaeche erfasste Einwilligung
     // konnte nie fuer die Website gelten, PlayerBoard-Fotos blieben deshalb immer intern.
-    expect(page).toContain("{ value: 'website', label: 'Vereinswebsite' }")
+    expect(readFileSync(join(PAGES_DIR, '../utils/consentPurposes.ts'), 'utf8')).toContain("{ value: 'website', label: 'Vereinswebsite' }")
+    expect(page).toContain('const purposeOptions = CONSENT_PURPOSE_OPTIONS')
     expect(page).toContain('v-model="registerForm.purposes"')
     expect(page).toContain('v-model="requestForm.purposes"')
     expect(page).toContain('if (registerForm.purposes.length === 0)')
     expect(page).toContain('if (requestForm.purposes.length === 0)')
+  })
+
+  it('laesst eine Papiererklaerung als neue Version bearbeiten, ohne ihre uebrigen Einschraenkungen zu verlieren', () => {
+    const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
+    const form = readFileSync(join(PAGES_DIR, '../components/ConsentEditForm.vue'), 'utf8')
+
+    // Vorher liess sich eine Einwilligung nur widerrufen -- ein vergessener Zweck "Website" hiess,
+    // alles neu zu erfassen. Bearbeiten ist eine Abloesung; die alte Version bleibt bestehen.
+    expect(page).toContain("return consent.origin === 'paper' && !consent.revokedAt && !consent.supersededBy")
+    expect(page).toContain('<ConsentEditForm v-if="editingId === consent.id"')
+    expect(form).toContain('/supersede')
+    // Plattformen, Anlaesse und Abteilungen kommen aus der bisherigen Version.
+    expect(form).toContain('scopeStructured: { ...original, purposes: form.purposes')
   })
 
   it('laesst eine veraltete Ladung auch im Fehlerfall nichts mehr schreiben', () => {
