@@ -139,9 +139,12 @@ function onConsentEdited(previousId: string, successor: ConsentRecord) {
 
 const purposeOptions = CONSENT_PURPOSE_OPTIONS
 
+// Website ist vorausgewaehlt, weil die Papierformulare des Vereins sie abdecken und PlayerBoard-
+// Trainingsfotos nur damit oeffentlich werden (Betreiberentscheidung, 2026-11-04). Die digitale
+// Anfrage bleibt bei Social Media: dort waehlt die Person selbst.
 const registerForm = reactive({
   directoryPersonId: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
-  purposes: ['social_media'] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
+  purposes: ['social_media', 'website'] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
   file: null as File | null,
 })
 const registerSubmitting = ref(false)

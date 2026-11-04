@@ -55,7 +55,8 @@ describe('consent purpose submissions', () => {
   it.each(['paper', 'digital'])('sends selected purposes for %s consent', async (kind) => {
     const { page, request } = await consentPage()
     const form = kind === 'paper' ? page.registerForm : page.requestForm
-    expect(form.purposes).toEqual(['social_media'])
+    // Papier: Website vorausgewaehlt, damit Trainingsfotos ohne Zusatzklick freigegeben werden koennen.
+    expect(form.purposes).toEqual(kind === 'paper' ? ['social_media', 'website'] : ['social_media'])
     form.directoryPersonId = 'person-1'
     form.purposes = ['website', 'internal']
     await (kind === 'paper' ? page.registerConsent() : page.sendConsentRequest())
