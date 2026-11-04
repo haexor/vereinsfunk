@@ -28,17 +28,17 @@ describe('Einwilligungen', () => {
     expect(page).toContain('if (requestForm.purposes.length === 0)')
   })
 
-  it('laesst eine Papiererklaerung als neue Version bearbeiten, ohne ihre uebrigen Einschraenkungen zu verlieren', () => {
+  it('zeigt nur noch die beiden Formulare und keine Liste der Einwilligungen', () => {
     const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
-    const form = readFileSync(join(PAGES_DIR, '../components/ConsentEditForm.vue'), 'utf8')
 
-    // Vorher liess sich eine Einwilligung nur widerrufen -- ein vergessener Zweck "Website" hiess,
-    // alles neu zu erfassen. Bearbeiten ist eine Abloesung; die alte Version bleibt bestehen.
-    expect(page).toContain("return consent.origin === 'paper' && !consent.revokedAt && !consent.supersededBy")
-    expect(page).toContain('<ConsentEditForm v-if="editingId === consent.id"')
-    expect(form).toContain('/supersede')
-    // Plattformen, Anlaesse und Abteilungen kommen aus der bisherigen Version.
-    expect(form).toContain('scopeStructured: { ...original, purposes: form.purposes')
+    // Was zu einer Person gespeichert ist, steht nach ihrer Auswahl im Formular; eine Liste daneben
+    // gibt es nicht mehr. Widerruf und erneutes Senden bleiben dort erreichbar.
+    expect(page).not.toContain('Erfasste Einwilligungen')
+    expect(page).not.toContain('Offene digitale Anfragen')
+    expect(page).toContain('Papiererklärung hinterlegen')
+    expect(page).toContain('Digital anfragen')
+    expect(page).toContain('@click="revoke(registerStored)"')
+    expect(page).toContain('@click="resendRequest(requestOpen)"')
   })
 
   it('laesst eine veraltete Ladung auch im Fehlerfall nichts mehr schreiben', () => {
@@ -55,7 +55,7 @@ describe('Einwilligungen', () => {
     const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
 
     // Beide Faelle meldete die Seite vorher nur als allgemeinen Speicherfehler.
-    expect(page).toContain("revokeError.value = errorCodeOf(error) === 'already_revoked'")
+    expect(page).toContain("registerError.value = errorCodeOf(error) === 'already_revoked'")
     expect(page).toContain("requestError.value = errorCodeOf(error) === 'request_not_open'")
   })
 

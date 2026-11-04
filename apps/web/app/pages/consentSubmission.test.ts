@@ -18,7 +18,7 @@ async function consentPage() {
   })
   const request = vi.fn(async () => ({ id: 'created' }))
   const page = (await runInNewContext(
-    `(async () => { ${compiled.outputText}; return { registerForm, requestForm, registerConsent, sendConsentRequest, registerError, requestError }; })()`,
+    `(async () => { ${compiled.outputText}; return { registerForm, requestForm, registerConsent, sendConsentRequest, registerError, requestError, consents, requests }; })()`,
     {
       exports: {},
       FormData,
@@ -41,12 +41,14 @@ async function consentPage() {
       useScopedLoad: () => ({ ready: Promise.resolve() }),
     },
   )) as {
-    registerForm: { directoryPersonId: string; purposes: string[] }
-    requestForm: { directoryPersonId: string; purposes: string[] }
+    registerForm: { directoryPersonId: string; purposes: string[]; mediaKinds: string[]; namingAllowed: boolean; signedAt: string; signerName: string; signerRole: string }
+    requestForm: { directoryPersonId: string; purposes: string[]; recipientEmail: string; recipientRole: string }
     registerConsent: () => Promise<void>
     sendConsentRequest: () => Promise<void>
     registerError: Ref<string>
     requestError: Ref<string>
+    consents: Ref<contracts.ConsentRecord[]>
+    requests: Ref<contracts.ConsentRequest[]>
   }
   return { page, request }
 }
@@ -83,5 +85,66 @@ describe('consent purpose submissions', () => {
     expect((kind === 'paper' ? page.registerError : page.requestError).value).toBe(
       'Bitte mindestens einen Zweck wählen.',
     )
+  })
+})
+
+function storedConsent(overrides: Partial<contracts.ConsentRecord>): contracts.ConsentRecord {
+  return {
+    id: 'consent-1', organizationId: 'org-1', directoryPersonId: 'person-1', pseudonymousSubjectRef: null,
+    scope: 'Zweck: Social Media', origin: 'paper', sourceId: null, signedAt: '2026-09-01', signerName: 'Eva Muster',
+    signerRole: 'self', guardianConfirmed: false, validFrom: '2026-09-01T00:00:00+02:00', validUntil: null,
+    revokedAt: null, revokedBy: null, revocationReason: null, supersededBy: null, status: 'valid',
+    createdAt: '2026-09-01T10:00:00+02:00',
+    scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo', 'video'], contexts: ['training'], namingAllowed: true, departmentIds: null },
+    ...overrides,
+  }
+}
+
+describe('Vorbelegung nach Auswahl einer Person', () => {
+  it('fuellt das Papierformular mit der gespeicherten Erklaerung und loest sie beim Speichern ab', async () => {
+    const { page, request } = await consentPage()
+    page.consents.value = [storedConsent({ id: 'old', createdAt: '2026-01-01T10:00:00+01:00', supersededBy: 'consent-1', status: 'superseded' }), storedConsent({})]
+
+    page.registerForm.directoryPersonId = 'person-1'
+    expect(page.registerForm).toMatchObject({ purposes: ['social_media'], mediaKinds: ['photo', 'video'], namingAllowed: true, signedAt: '2026-09-01', signerName: 'Eva Muster', signerRole: 'self' })
+
+    page.registerForm.purposes = ['social_media', 'website']
+    await page.registerConsent()
+    const [path, options] = request.mock.calls[0]! as unknown as [string, { body: { scopeStructured: { purposes: string[]; contexts: string[] | null } } }]
+    expect(path).toBe('/v1/consents/consent-1/supersede')
+    expect(options.body.scopeStructured.purposes).toEqual(['social_media', 'website'])
+    // Was das Formular nicht anbietet, bleibt wie in der bisherigen Version.
+    expect(options.body.scopeStructured.contexts).toEqual(['training'])
+  })
+
+  it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {
+    const { page, request } = await consentPage()
+    page.consents.value = [storedConsent({ origin: 'digital' })]
+
+    page.registerForm.directoryPersonId = 'person-1'
+    expect(page.registerForm.mediaKinds).toEqual(['photo', 'video'])
+    await page.registerConsent()
+    expect((request.mock.calls[0]! as unknown as [string])[0]).toBe('/v1/consents')
+  })
+
+  it('setzt nach einem Widerruf und ohne gespeicherte Einwilligung die Vorgaben', async () => {
+    const { page } = await consentPage()
+    page.consents.value = [storedConsent({ revokedAt: '2026-10-01T10:00:00+02:00', status: 'revoked' })]
+
+    page.registerForm.directoryPersonId = 'person-1'
+    expect(page.registerForm).toMatchObject({ purposes: ['social_media', 'website'], mediaKinds: ['photo'], namingAllowed: false, signedAt: '', signerName: '', signerRole: 'guardian' })
+  })
+
+  it('uebernimmt Adresse und Umfang einer offenen digitalen Anfrage', async () => {
+    const { page } = await consentPage()
+    page.requests.value = [{
+      id: 'request-1', organizationId: 'org-1', departmentId: 'dep-1', directoryPersonId: 'person-1',
+      recipientEmail: 'eltern@example.org', recipientRole: 'guardian', textVersion: 'v1', status: 'sent',
+      expiresAt: '2026-12-01T00:00:00+01:00', createdAt: '2026-11-01T10:00:00+01:00',
+      requestedScope: { purposes: ['website'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+    } as contracts.ConsentRequest]
+
+    page.requestForm.directoryPersonId = 'person-1'
+    expect(page.requestForm).toMatchObject({ purposes: ['website'], recipientEmail: 'eltern@example.org', recipientRole: 'guardian' })
   })
 })

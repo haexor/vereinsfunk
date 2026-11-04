@@ -41,12 +41,6 @@ const consents = ref<ConsentRecord[]>([])
 const requests = ref<ConsentRequest[]>([])
 const people = ref<DirectoryPerson[]>([])
 
-function personLabel(personId: string | null): string {
-  if (!personId) return 'Pseudonym erfasst'
-  const person = people.value.find((item) => item.id === personId)
-  return person ? `${person.firstName} ${person.lastName}` : 'Unbekannte Person'
-}
-
 // Nur der zuletzt gestartete Lauf darf schreiben -- auch im Fehlerfall: ein frueher gestarteter
 // Lauf fuer eine vorige Verein-/Abteilungsauswahl ueberschriebe sonst deren Ergebnisse oder setzte
 // eine Fehlermeldung ueber die bereits geladenen aktuellen Daten.
@@ -78,12 +72,6 @@ const { ready } = useScopedLoad(
 )
 await ready
 
-const showMinorsWithoutConsent = ref(true)
-const minorsWithoutValidConsent = computed(() => {
-  const validPersonIds = new Set(consents.value.filter((consent) => consent.status === 'valid').map((consent) => consent.directoryPersonId))
-  return people.value.filter((person) => person.isMinor && person.status === 'active' && !validPersonIds.has(person.id))
-})
-
 const STATUS_LABELS: Record<ConsentStatus, string> = {
   valid: 'Gültig', expiring_soon: 'Läuft ab', expired: 'Abgelaufen', revoked: 'Widerrufen',
   not_yet_valid: 'Noch nicht gültig', guardian_missing: 'Bestätigung fehlt', superseded: 'Abgelöst',
@@ -94,45 +82,30 @@ const STATUS_COLORS: Record<ConsentStatus, string> = {
   revoked: 'bg-red-100 text-red-800', not_yet_valid: 'bg-[#eef1ea] text-[#3d453f]', guardian_missing: 'bg-amber-100 text-amber-800',
   superseded: 'bg-[#eef1ea] text-[#6c756f]', imported_unverified: 'bg-[#eef1ea] text-[#6c756f]',
 }
+const ORIGIN_LABELS: Record<ConsentRecord['origin'], string> = { paper: 'Papiererklärung', digital: 'Digital erteilt', imported: 'Aus Quellsystem' }
 
-// --- Widerruf ------------------------------------------------------------------------------
-
-const revokingId = ref<string | null>(null)
-const revokeError = ref('')
-async function revoke(consent: ConsentRecord) {
-  if (!confirm('Diese Einwilligung wirklich widerrufen? Offene Freigaben und geplante Veröffentlichungen werden sofort betroffen.')) return
-  // prompt() statt confirm(), weil der Widerrufsgrund (consent_records.revocation_reason) sonst an
-  // dieser Oberflaeche nie erfasst wuerde (gefunden im Code-Review). null bei Abbruch.
-  const reason = prompt('Grund für den Widerruf (optional):')
-  revokingId.value = consent.id
-  revokeError.value = ''
-  try {
-    const updated = await api.request(`/v1/consents/${consent.id}/revoke`, { method: 'POST', body: { revokedBy: 'organization', reason: reason || undefined } }, ConsentRecordSchema)
-    consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
-  } catch (error) {
-    revokeError.value = errorCodeOf(error) === 'already_revoked'
-      ? 'Diese Einwilligung wurde bereits widerrufen.'
-      : 'Der Widerruf konnte nicht gespeichert werden.'
-  } finally {
-    revokingId.value = null
-  }
+function newestFirst<T extends { createdAt: string }>(items: T[]): T[] {
+  return [...items].sort((a, b) => b.createdAt.localeCompare(a.createdAt))
+}
+// Die Seite zeigt keine Liste mehr: was zu einer Person gespeichert ist, steht im Formular, sobald
+// sie ausgewaehlt wird. Massgeblich ist die juengste Einwilligung, die weder abgeloest noch
+// widerrufen ist; ohne sie wird ein juengerer Widerruf angezeigt.
+function currentConsentOf(personId: string): ConsentRecord | undefined {
+  return newestFirst(consents.value.filter((consent) => consent.directoryPersonId === personId && !consent.supersededBy && !consent.revokedAt))[0]
+}
+function storedConsentOf(personId: string): ConsentRecord | undefined {
+  return currentConsentOf(personId) ?? newestFirst(consents.value.filter((consent) => consent.directoryPersonId === personId && !consent.supersededBy))[0]
+}
+function openRequestOf(personId: string): ConsentRequest | undefined {
+  return newestFirst(requests.value.filter((request) => request.directoryPersonId === personId && request.status === 'sent'))[0]
+}
+function formatDate(value: string): string {
+  return new Date(value).toLocaleDateString('de-DE')
 }
 
-// --- Bearbeiten (Abloesung) -----------------------------------------------------------------
-
-// Nur Papiererklaerungen: dort uebertraegt der Verein selbst, was auf dem Formular steht. Den Umfang
-// einer digital erteilten Einwilligung hat die Person selbst gewaehlt; ihn darf der Verein nicht
-// nachtraeglich erweitern.
-const editingId = ref<string | null>(null)
-function canEdit(consent: ConsentRecord): boolean {
-  return consent.origin === 'paper' && !consent.revokedAt && !consent.supersededBy
-}
-function onConsentEdited(previousId: string, successor: ConsentRecord) {
-  consents.value = [
-    successor,
-    ...consents.value.map((item) => (item.id === previousId ? { ...item, supersededBy: successor.id, status: 'superseded' as const } : item)),
-  ]
-  editingId.value = null
+const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
+function errorCodeOf(error: unknown): string | undefined {
+  return error instanceof ApiRequestError ? error.code : undefined
 }
 
 // --- Papiererklärung hinterlegen ------------------------------------------------------------
@@ -142,22 +115,50 @@ const purposeOptions = CONSENT_PURPOSE_OPTIONS
 // Website ist vorausgewaehlt, weil die Papierformulare des Vereins sie abdecken und PlayerBoard-
 // Trainingsfotos nur damit oeffentlich werden (Betreiberentscheidung, 2026-11-04). Die digitale
 // Anfrage bleibt bei Social Media: dort waehlt die Person selbst.
+const PAPER_DEFAULT_PURPOSES = ['social_media', 'website']
 const registerForm = reactive({
   directoryPersonId: '', signedAt: '', signerName: '', signerRole: 'guardian' as 'self' | 'guardian', guardianConfirmed: false,
-  purposes: ['social_media', 'website'] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
+  purposes: [...PAPER_DEFAULT_PURPOSES] as string[], mediaKinds: ['photo'] as string[], allPlatforms: true, platforms: [] as string[], namingAllowed: false,
   file: null as File | null,
 })
 const registerSubmitting = ref(false)
 const registerError = ref('')
+const registerNotice = ref('')
 // Das Datei-Feld laesst sich nicht per v-model leeren: ohne neuen key zeigte es nach dem Hinterlegen
 // weiter die alte Datei, waehrend registerForm.file schon null war -- der naechste Eintrag liefe dann
 // ohne Nachweis, obwohl einer angezeigt wird (gleiches Muster wie syncFileInputKey in integrationen.vue).
 const registerFileInputKey = ref(0)
 
-const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
-function errorCodeOf(error: unknown): string | undefined {
-  return error instanceof ApiRequestError ? error.code : undefined
+const registerStored = computed(() => (registerForm.directoryPersonId ? storedConsentOf(registerForm.directoryPersonId) : undefined))
+// Nur eine Papiererklaerung wird beim Speichern abgeloest (POST /v1/consents/:id/supersede): dort
+// uebertraegt der Verein selbst, was auf dem Formular steht. Den Umfang einer digital erteilten
+// Einwilligung hat die Person gewaehlt -- neben ihr wird eine weitere Papiererklaerung hinterlegt.
+const registerSupersedes = computed(() => {
+  const stored = registerStored.value
+  return stored && stored.origin === 'paper' && !stored.revokedAt ? stored : undefined
+})
+
+function prefillRegisterForm(personId: string) {
+  const current = personId ? currentConsentOf(personId) : undefined
+  const scope = current?.scopeStructured
+  registerForm.purposes = scope ? [...scope.purposes] : [...PAPER_DEFAULT_PURPOSES]
+  registerForm.mediaKinds = scope ? [...scope.mediaKinds] : ['photo']
+  registerForm.namingAllowed = scope?.namingAllowed ?? false
+  registerForm.allPlatforms = !scope?.platforms
+  registerForm.platforms = scope?.platforms ? [...scope.platforms] : []
+  registerForm.signedAt = current?.signedAt ?? ''
+  registerForm.signerName = current?.signerName ?? ''
+  registerForm.signerRole = current?.signerRole ?? 'guardian'
+  registerForm.guardianConfirmed = current?.guardianConfirmed ?? false
+  registerForm.file = null; registerFileInputKey.value += 1
 }
+// sync: die Werte stehen sofort nach der Auswahl im Formular, nicht erst nach dem naechsten Tick --
+// sonst ueberschriebe ein spaeter laufender Watcher schon begonnene Eingaben.
+watch(() => registerForm.directoryPersonId, (personId) => {
+  registerError.value = ''
+  if (personId) registerNotice.value = ''
+  prefillRegisterForm(personId)
+}, { flush: 'sync' })
 
 async function registerConsent() {
   if (!organizationId.value) return
@@ -168,33 +169,82 @@ async function registerConsent() {
   if (registerForm.purposes.length === 0) { registerError.value = PURPOSE_REQUIRED_MESSAGE; return }
   registerSubmitting.value = true
   registerError.value = ''
+  const previous = registerSupersedes.value
   try {
-    const scopeStructured = {
-      purposes: registerForm.purposes, platforms: registerForm.allPlatforms ? null : registerForm.platforms,
-      mediaKinds: registerForm.mediaKinds, contexts: null, namingAllowed: registerForm.namingAllowed, departmentIds: null,
-    }
-    const body = new FormData()
-    body.set('organizationId', organizationId.value)
-    if (registerForm.directoryPersonId) body.set('directoryPersonId', registerForm.directoryPersonId)
-    body.set('scopeStructured', JSON.stringify(scopeStructured))
-    body.set('signedAt', registerForm.signedAt)
-    // Optional: ein leerer Name wird gar nicht erst gesendet, sonst scheiterte er an min(1).
-    if (registerForm.signerName.trim()) body.set('signerName', registerForm.signerName)
-    body.set('signerRole', registerForm.signerRole)
     // Eine Erziehungsberechtigung kann nur bestaetigt sein, wenn die Rolle 'guardian' ist -- sonst
     // bliebe ein zuvor gesetzter Haken auch nach dem Wechsel auf 'self' bestehen (gefunden im
     // Code-Review), weil das Feld dann ausgeblendet wird, aber registerForm.guardianConfirmed nicht.
-    body.set('guardianConfirmed', String(registerForm.signerRole === 'guardian' && registerForm.guardianConfirmed))
-    // Der Nachweis ist optional; ohne Datei wird kein Dateiteil gesendet.
-    if (registerForm.file) body.set('file', registerForm.file)
-    const created = await api.request('/v1/consents', { method: 'POST', body }, ConsentRecordSchema)
-    consents.value = [created, ...consents.value]
-    registerForm.directoryPersonId = ''; registerForm.signedAt = ''; registerForm.signerName = ''
-    registerForm.guardianConfirmed = false; registerForm.file = null; registerFileInputKey.value += 1
+    const guardianConfirmed = registerForm.signerRole === 'guardian' && registerForm.guardianConfirmed
+    if (previous) {
+      const successor = await api.request(`/v1/consents/${previous.id}/supersede`, {
+        method: 'POST',
+        body: {
+          // Anlaesse und Abteilungen bietet das Formular nicht an -- sie bleiben wie in der bisherigen
+          // Version, statt beim Speichern stillschweigend zu "alle" zu werden.
+          scopeStructured: { ...previous.scopeStructured, purposes: registerForm.purposes, mediaKinds: registerForm.mediaKinds, namingAllowed: registerForm.namingAllowed },
+          signedAt: registerForm.signedAt,
+          signerName: registerForm.signerName.trim() || undefined,
+          signerRole: registerForm.signerRole,
+          guardianConfirmed,
+        },
+      }, ConsentRecordSchema)
+      consents.value = [
+        successor,
+        ...consents.value.map((item) => (item.id === previous.id ? { ...item, supersededBy: successor.id, status: 'superseded' as const } : item)),
+      ]
+    } else {
+      const scopeStructured = {
+        purposes: registerForm.purposes, platforms: registerForm.allPlatforms ? null : registerForm.platforms,
+        mediaKinds: registerForm.mediaKinds, contexts: null, namingAllowed: registerForm.namingAllowed, departmentIds: null,
+      }
+      const body = new FormData()
+      body.set('organizationId', organizationId.value)
+      body.set('directoryPersonId', registerForm.directoryPersonId)
+      body.set('scopeStructured', JSON.stringify(scopeStructured))
+      body.set('signedAt', registerForm.signedAt)
+      // Optional: ein leerer Name wird gar nicht erst gesendet, sonst scheiterte er an min(1).
+      if (registerForm.signerName.trim()) body.set('signerName', registerForm.signerName)
+      body.set('signerRole', registerForm.signerRole)
+      body.set('guardianConfirmed', String(guardianConfirmed))
+      // Der Nachweis ist optional; ohne Datei wird kein Dateiteil gesendet.
+      if (registerForm.file) body.set('file', registerForm.file)
+      const created = await api.request('/v1/consents', { method: 'POST', body }, ConsentRecordSchema)
+      consents.value = [created, ...consents.value]
+    }
+    registerNotice.value = previous ? 'Die Änderung ist gespeichert.' : 'Die Erklärung ist hinterlegt.'
+    registerForm.directoryPersonId = ''
   } catch (error) {
-    registerError.value = errorCodeOf(error) === 'guardian_required_for_minor' ? GUARDIAN_REQUIRED_MESSAGE : 'Die Erklärung konnte nicht hinterlegt werden.'
+    const code = errorCodeOf(error)
+    registerError.value = code === 'guardian_required_for_minor'
+      ? GUARDIAN_REQUIRED_MESSAGE
+      : code === 'already_superseded' || code === 'already_revoked'
+        ? 'Diese Einwilligung wurde inzwischen geändert oder widerrufen. Bitte die Seite neu laden.'
+        : previous ? 'Die Änderung konnte nicht gespeichert werden.' : 'Die Erklärung konnte nicht hinterlegt werden.'
   } finally {
     registerSubmitting.value = false
+  }
+}
+
+// --- Widerruf ------------------------------------------------------------------------------
+
+const revokingId = ref<string | null>(null)
+async function revoke(consent: ConsentRecord) {
+  if (!confirm('Diese Einwilligung wirklich widerrufen? Offene Freigaben und geplante Veröffentlichungen werden sofort betroffen.')) return
+  // prompt() statt confirm(), weil der Widerrufsgrund (consent_records.revocation_reason) sonst an
+  // dieser Oberflaeche nie erfasst wuerde (gefunden im Code-Review). null bei Abbruch.
+  const reason = prompt('Grund für den Widerruf (optional):')
+  revokingId.value = consent.id
+  registerError.value = ''
+  try {
+    const updated = await api.request(`/v1/consents/${consent.id}/revoke`, { method: 'POST', body: { revokedBy: 'organization', reason: reason || undefined } }, ConsentRecordSchema)
+    consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
+    if (registerForm.directoryPersonId === updated.directoryPersonId) prefillRegisterForm(registerForm.directoryPersonId)
+  } catch (error) {
+    registerError.value = errorCodeOf(error) === 'already_revoked'
+      ? 'Diese Einwilligung wurde bereits widerrufen.'
+      : 'Der Widerruf konnte nicht gespeichert werden.'
+  } finally {
+    revokingId.value = null
   }
 }
 
@@ -206,6 +256,24 @@ const requestForm = reactive({
 })
 const requestSubmitting = ref(false)
 const requestError = ref('')
+const requestNotice = ref('')
+
+const requestOpen = computed(() => (requestForm.directoryPersonId ? openRequestOf(requestForm.directoryPersonId) : undefined))
+const requestStored = computed(() => (requestForm.directoryPersonId ? storedConsentOf(requestForm.directoryPersonId) : undefined))
+
+// Vorbelegung: eine offene Anfrage zuerst (Adresse und angefragter Umfang), sonst der Umfang der
+// gespeicherten Einwilligung -- so fragt der Verein nicht versehentlich weniger an als schon gilt.
+watch(() => requestForm.directoryPersonId, (personId) => {
+  requestError.value = ''
+  if (personId) requestNotice.value = ''
+  const open = personId ? openRequestOf(personId) : undefined
+  const scope = open?.requestedScope ?? (personId ? currentConsentOf(personId)?.scopeStructured : undefined)
+  requestForm.purposes = scope ? [...scope.purposes] : ['social_media']
+  requestForm.mediaKinds = scope ? [...scope.mediaKinds] : ['photo']
+  requestForm.namingAllowed = scope?.namingAllowed ?? false
+  requestForm.recipientEmail = open?.recipientEmail ?? ''
+  requestForm.recipientRole = open?.recipientRole ?? 'guardian'
+}, { flush: 'sync' })
 
 async function sendConsentRequest() {
   if (!organizationId.value) return
@@ -223,7 +291,8 @@ async function sendConsentRequest() {
       },
     }, ConsentRequestSchema)
     requests.value = [created, ...requests.value]
-    requestForm.directoryPersonId = ''; requestForm.recipientEmail = ''
+    requestNotice.value = `Die Anfrage ist an ${created.recipientEmail} versendet.`
+    requestForm.directoryPersonId = ''
   } catch (error) {
     const code = errorCodeOf(error)
     requestError.value = code === 'request_already_open'
@@ -237,9 +306,11 @@ async function sendConsentRequest() {
 }
 
 async function resendRequest(request: ConsentRequest) {
+  requestError.value = ''
   try {
     const updated = await api.request(`/v1/consent-requests/${request.id}/resend`, { method: 'POST' }, ConsentRequestSchema)
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
+    requestNotice.value = `Die Anfrage ist erneut an ${updated.recipientEmail} versendet.`
   } catch (error) {
     requestError.value = errorCodeOf(error) === 'request_not_open'
       ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
@@ -272,73 +343,6 @@ async function resendRequest(request: ConsentRequest) {
         </Select>
       </section>
 
-      <section v-if="showMinorsWithoutConsent && minorsWithoutValidConsent.length" class="card mb-6 border-amber-200 bg-amber-50 p-5">
-        <div class="flex items-start justify-between gap-3">
-          <div>
-            <p class="text-sm font-bold text-amber-900">Minderjährige ohne gültige Einwilligung</p>
-            <ul class="mt-2 space-y-0.5 text-xs text-amber-800">
-              <li v-for="person in minorsWithoutValidConsent" :key="person.id">{{ person.firstName }} {{ person.lastName }}</li>
-            </ul>
-          </div>
-          <button type="button" class="focus-ring shrink-0 text-xs font-semibold text-amber-800" @click="showMinorsWithoutConsent = false">Ausblenden</button>
-        </div>
-      </section>
-
-      <p v-if="revokeError" class="mb-4 text-sm text-amber-800">{{ revokeError }}</p>
-
-      <section class="card mb-6 divide-y divide-[#e8e9e2]">
-        <h2 class="p-4 font-display text-base font-bold sm:px-6">Erfasste Einwilligungen</h2>
-        <div v-for="consent in consents" :key="consent.id" class="p-4 sm:px-6">
-          <div class="flex flex-wrap items-start justify-between gap-3">
-            <div>
-              <p class="text-sm font-semibold">{{ personLabel(consent.directoryPersonId) }}</p>
-              <p class="mt-1 text-[11px] text-[#9aa096]">{{ consent.scope }}</p>
-              <p class="mt-1 text-[11px] text-[#9aa096]">
-                {{ consent.origin === 'paper' ? 'Papiererklärung' : consent.origin === 'digital' ? 'Digital erteilt' : 'Aus Quellsystem' }}
-                <span v-if="consent.validUntil"> · gültig bis {{ new Date(consent.validUntil).toLocaleDateString('de-DE') }}</span>
-              </p>
-              <span class="mt-1.5 inline-flex items-center rounded-full px-2.5 py-1 text-[10px] font-semibold" :class="STATUS_COLORS[consent.status]">
-                {{ STATUS_LABELS[consent.status] }}
-              </span>
-            </div>
-            <div class="flex shrink-0 gap-2">
-              <button
-                v-if="canEdit(consent) && editingId !== consent.id"
-                type="button"
-                class="focus-ring rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold"
-                @click="editingId = consent.id"
-              >
-                Bearbeiten
-              </button>
-              <button
-                v-if="!consent.revokedAt && !consent.supersededBy"
-                type="button" :disabled="revokingId === consent.id"
-                class="focus-ring rounded-lg border border-amber-300 px-3 py-1.5 text-[11px] font-semibold text-amber-800 disabled:opacity-60"
-                @click="revoke(consent)"
-              >
-                {{ revokingId === consent.id ? 'Wird widerrufen …' : 'Widerrufen' }}
-              </button>
-            </div>
-          </div>
-          <ConsentEditForm v-if="editingId === consent.id" :consent="consent" @saved="onConsentEdited(consent.id, $event)" @cancel="editingId = null" />
-        </div>
-        <p v-if="!consents.length" class="p-8 text-center text-xs text-[#9aa096]">Noch keine Einwilligungen erfasst.</p>
-      </section>
-
-      <section class="card mb-6 divide-y divide-[#e8e9e2]">
-        <h2 class="p-4 font-display text-base font-bold sm:px-6">Offene digitale Anfragen</h2>
-        <div v-for="request in requests.filter((item) => item.status === 'sent')" :key="request.id" class="flex flex-wrap items-center justify-between gap-3 p-4 sm:px-6">
-          <div>
-            <p class="text-sm font-semibold">{{ personLabel(request.directoryPersonId) }}</p>
-            <p class="mt-1 text-[11px] text-[#9aa096]">An {{ request.recipientEmail }} · läuft ab am {{ new Date(request.expiresAt).toLocaleDateString('de-DE') }}</p>
-          </div>
-          <button type="button" class="focus-ring shrink-0 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold" @click="resendRequest(request)">
-            Erneut senden
-          </button>
-        </div>
-        <p v-if="!requests.some((item) => item.status === 'sent')" class="p-8 text-center text-xs text-[#9aa096]">Keine offenen Anfragen.</p>
-      </section>
-
       <div class="grid gap-6 sm:grid-cols-2">
         <section class="card p-6">
           <h2 class="mb-4 font-display text-base font-bold">Papiererklärung hinterlegen</h2>
@@ -351,6 +355,26 @@ async function resendRequest(request: ConsentRequest) {
                 </SelectContent>
               </Select>
             </label>
+            <div v-if="registerStored" class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f4f5ef] p-3 text-xs">
+              <p class="flex flex-wrap items-center gap-1.5">
+                <span class="inline-flex rounded-full px-2.5 py-1 text-[10px] font-semibold" :class="STATUS_COLORS[registerStored.status]">{{ STATUS_LABELS[registerStored.status] }}</span>
+                {{ ORIGIN_LABELS[registerStored.origin] }}
+                <span v-if="registerStored.revokedAt">· widerrufen am {{ formatDate(registerStored.revokedAt) }}</span>
+                <span v-else-if="registerStored.validUntil">· gültig bis {{ formatDate(registerStored.validUntil) }}</span>
+              </p>
+              <button
+                v-if="!registerStored.revokedAt"
+                type="button" :disabled="revokingId === registerStored.id"
+                class="focus-ring rounded-lg border border-amber-300 px-3 py-1.5 text-[11px] font-semibold text-amber-800 disabled:opacity-60"
+                @click="revoke(registerStored)"
+              >
+                {{ revokingId === registerStored.id ? 'Wird widerrufen …' : 'Widerrufen' }}
+              </button>
+              <p v-if="!registerStored.revokedAt && !registerSupersedes" class="w-full text-[#6c756f]">
+                Diese Einwilligung wurde nicht auf Papier erteilt. Beim Speichern wird zusätzlich eine Papiererklärung hinterlegt.
+              </p>
+            </div>
+            <p v-else-if="registerForm.directoryPersonId" class="text-xs text-[#6c756f]">Für diese Person ist noch keine Einwilligung gespeichert.</p>
             <fieldset class="flex flex-wrap gap-3 text-xs"
               :aria-invalid="registerError === PURPOSE_REQUIRED_MESSAGE && registerForm.purposes.length === 0"
               :aria-describedby="registerError === PURPOSE_REQUIRED_MESSAGE && registerForm.purposes.length === 0 ? 'register-consent-error' : undefined">
@@ -375,12 +399,15 @@ async function resendRequest(request: ConsentRequest) {
             <label v-if="registerForm.signerRole === 'guardian'" class="flex items-center gap-1.5 text-xs">
               <input v-model="registerForm.guardianConfirmed" type="checkbox" required /> Erziehungsberechtigung bestätigt
             </label>
-            <label><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP) <span class="font-normal text-[#7b827d]">(optional)</span></span>
+            <!-- Eine Abloesung uebernimmt den Nachweis der bisherigen Version; ein neues Dokument laedt sie nicht hoch. -->
+            <p v-if="registerSupersedes" class="text-xs text-[#6c756f]">Der bisherige Nachweis bleibt erhalten.</p>
+            <label v-else><span class="mb-1 block text-xs font-semibold">Nachweis (PDF, JPEG, PNG, WEBP) <span class="font-normal text-[#7b827d]">(optional)</span></span>
               <input :key="registerFileInputKey" type="file" accept=".pdf,.jpg,.jpeg,.png,.webp" class="focus-ring w-full text-xs" @change="registerForm.file = ($event.target as HTMLInputElement).files?.[0] ?? null" />
             </label>
             <p v-if="registerError" id="register-consent-error" role="alert" class="text-xs text-amber-800">{{ registerError }}</p>
+            <p v-if="registerNotice" role="status" class="text-xs text-emerald-800">{{ registerNotice }}</p>
             <button type="submit" :disabled="registerSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
-              {{ registerSubmitting ? 'Wird hinterlegt …' : 'Hinterlegen' }}
+              {{ registerSubmitting ? 'Wird gespeichert …' : registerSupersedes ? 'Änderung speichern' : 'Hinterlegen' }}
             </button>
           </form>
         </section>
@@ -396,6 +423,15 @@ async function resendRequest(request: ConsentRequest) {
                 </SelectContent>
               </Select>
             </label>
+            <div v-if="requestOpen" class="flex flex-wrap items-center justify-between gap-2 rounded-xl bg-[#f4f5ef] p-3 text-xs">
+              <p>Offene Anfrage an {{ requestOpen.recipientEmail }} · läuft ab am {{ formatDate(requestOpen.expiresAt) }}</p>
+              <button type="button" class="focus-ring shrink-0 rounded-lg border border-[#dfe0d9] px-3 py-1.5 text-[11px] font-semibold" @click="resendRequest(requestOpen)">
+                Erneut senden
+              </button>
+            </div>
+            <p v-else-if="requestStored" class="text-xs text-[#6c756f]">
+              Gespeichert: {{ ORIGIN_LABELS[requestStored.origin] }} · {{ STATUS_LABELS[requestStored.status] }}
+            </p>
             <label><span class="mb-1 block text-xs font-semibold">E-Mail-Adresse</span>
               <input v-model="requestForm.recipientEmail" type="email" required class="focus-ring w-full rounded-xl border border-[#dfe0d9] p-2.5 text-sm" />
             </label>
@@ -415,6 +451,7 @@ async function resendRequest(request: ConsentRequest) {
               <label class="flex items-center gap-1.5"><input v-model="requestForm.namingAllowed" type="checkbox" /> Namentliche Nennung erlaubt</label>
             </div>
             <p v-if="requestError" id="request-consent-error" role="alert" class="text-xs text-amber-800">{{ requestError }}</p>
+            <p v-if="requestNotice" role="status" class="text-xs text-emerald-800">{{ requestNotice }}</p>
             <button type="submit" :disabled="requestSubmitting" class="focus-ring rounded-xl bg-forest px-4 py-2.5 text-xs font-bold text-white disabled:opacity-60">
               {{ requestSubmitting ? 'Wird gesendet …' : 'Anfrage senden' }}
             </button>
