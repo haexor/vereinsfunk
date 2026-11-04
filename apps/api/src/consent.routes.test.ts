@@ -468,6 +468,85 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     expect(insertedRow).toMatchObject({ valid_from: '2026-08-01T00:00:00.000Z', valid_until: '2027-08-01T00:00:00.000Z' })
   })
 
+  it('supersedes a consent without statement text or signer name and derives the scope line from the new purposes', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      forService: () =>
+        ({
+          from: (table: string) => {
+            if (table === 'consent_records') {
+              return {
+                select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null }),
+                insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) },
+                update: () => chain({ data: { id: CONSENT_ID }, error: null }),
+              }
+            }
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scopeStructured: { purposes: ['social_media', 'website'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerRole: 'self', guardianConfirmed: false,
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow?.signer_name).toBeNull()
+    expect(insertedRow?.scope).toContain('Zweck: Social Media, Vereinswebsite')
+  })
+
+  it('preserves a custom signed scope when the structured scope is unchanged and no replacement text is sent', async () => {
+    let insertedRow: Record<string, unknown> | undefined
+    const clients: SupabaseClientFactory = {
+      forUser: () => ({
+        from: (table: string) => {
+          if (table === 'consent_records') return chain({ data: consentRecordRow({ scope: 'Nur Mannschaftsfotos bei Heimspielen', scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null } }), error: null })
+          if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+          if (table === 'policy_settings') return chain({ data: [], error: null })
+          throw new Error(`unexpected table: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+      forService: () => ({
+        from: (table: string) => {
+          if (table === 'consent_records') return {
+            select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null }),
+            insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) },
+            update: () => chain({ data: { id: CONSENT_ID }, error: null }),
+          }
+          if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+          throw new Error(`unexpected table in service fake: ${table}`)
+        },
+      }) as unknown as SupabaseClient,
+    }
+    const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
+    const token = await signAccessToken(USER_ID)
+    const response = await app.inject({
+      method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`,
+      headers: { authorization: `Bearer ${token}` },
+      payload: {
+        scopeStructured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+        signedAt: '2026-08-01', signerRole: 'self', guardianConfirmed: false,
+      },
+    })
+    expect(response.statusCode).toBe(201)
+    expect(insertedRow?.scope).toBe('Nur Mannschaftsfotos bei Heimspielen')
+  })
+
   // Wie chain(), protokolliert aber jeden Aufruf samt Argumenten -- fuer Tests, die pruefen, WELCHE
   // Filter eine Route an ein Update haengt.
   function recordingChain(result: { data: unknown; error: unknown }, calls: unknown[][]) {

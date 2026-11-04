@@ -77,11 +77,13 @@ export const RevokeConsentRequestSchema = z.object({
   reason: z.string().trim().min(1).max(500).optional(),
 })
 
+// Wie bei CreateConsentRecordFieldsSchema: ohne Freitext leitet die API scope aus
+// scopeStructured ab, ein fehlender Name wird als NULL gespeichert.
 export const SupersedeConsentRequestSchema = z.object({
-  scope: z.string().trim().min(1).max(500),
+  scope: z.string().trim().min(1).max(500).optional(),
   scopeStructured: ConsentScopeSchema,
   signedAt: z.string().regex(/^\d{4}-\d{2}-\d{2}$/),
-  signerName: z.string().trim().min(1).max(160),
+  signerName: z.string().trim().min(1).max(160).optional(),
   signerRole: ConsentSignerRoleSchema,
   guardianConfirmed: z.boolean().default(false),
 })
