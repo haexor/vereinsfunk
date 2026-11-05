@@ -55,8 +55,8 @@ describe('Einwilligungen', () => {
     const page = readFileSync(join(PAGES_DIR, 'einwilligungen.vue'), 'utf8')
 
     // Beide Faelle meldete die Seite vorher nur als allgemeinen Speicherfehler.
-    expect(page).toContain("registerError.value = errorCodeOf(error) === 'already_revoked'")
-    expect(page).toContain("requestError.value = errorCodeOf(error) === 'request_not_open'")
+    expect(page).toContain(": code === 'already_revoked'\n        ? 'Diese Einwilligung wurde bereits widerrufen.'")
+    expect(page).toContain(": code === 'request_not_open'\n        ? 'Diese Anfrage ist nicht mehr offen")
   })
 
   it('setzt das Eingangsdatum einer Betroffenenanfrage auf den heutigen Tag in der Vereinszeitzone', () => {

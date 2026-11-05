@@ -148,6 +148,18 @@ describe('Vorbelegung nach Auswahl einer Person', () => {
     expect(page.registerForm.purposes).toEqual(['social_media', 'website'])
   })
 
+  it.each(['paper', 'digital'])('nennt beim %s-Formular eine fehlende Berechtigung als Grund', async (kind) => {
+    const { page, request } = await consentPage()
+    request.mockRejectedValueOnce(new ApiRequestError('forbidden', 403))
+    const form = kind === 'paper' ? page.registerForm : page.requestForm
+    form.directoryPersonId = 'person-1'
+    await (kind === 'paper' ? page.registerConsent() : page.sendConsentRequest())
+    // Vorher meldete die Seite einem Trainer ohne consent.manage nur "konnte nicht gespeichert werden".
+    expect((kind === 'paper' ? page.registerError : page.requestError).value).toBe(
+      'Dafür fehlt dir die Berechtigung. Einwilligungen pflegt die Vereins- oder Abteilungsleitung.',
+    )
+  })
+
   it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {
     const { page, request } = await consentPage()
     page.consents.value = [storedConsent({ origin: 'digital' })]

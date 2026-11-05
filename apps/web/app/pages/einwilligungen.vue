@@ -103,6 +103,9 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString('de-DE')
 }
 
+// 403 forbidden: die API prueft consent.manage fuer die Abteilung der Person. Trainer
+// (team_manager) haben es nicht (Plan 015) -- vorher sahen sie nur "konnte nicht gespeichert werden".
+const FORBIDDEN_MESSAGE = 'Dafür fehlt dir die Berechtigung. Einwilligungen pflegt die Vereins- oder Abteilungsleitung.'
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
 const MEDIA_KIND_REQUIRED_MESSAGE = 'Bitte mindestens eine Medienart auswählen.'
 function errorCodeOf(error: unknown): string | undefined {
@@ -218,11 +221,13 @@ async function registerConsent() {
     prefillRegisterForm(registerForm.directoryPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
-    registerError.value = code === 'guardian_required_for_minor'
-      ? GUARDIAN_REQUIRED_MESSAGE
-      : code === 'already_superseded' || code === 'already_revoked'
-        ? 'Diese Einwilligung wurde inzwischen geändert oder widerrufen. Bitte die Seite neu laden.'
-        : previous ? 'Die Änderung konnte nicht gespeichert werden.' : 'Die Erklärung konnte nicht hinterlegt werden.'
+    registerError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'guardian_required_for_minor'
+        ? GUARDIAN_REQUIRED_MESSAGE
+        : code === 'already_superseded' || code === 'already_revoked'
+          ? 'Diese Einwilligung wurde inzwischen geändert oder widerrufen. Bitte die Seite neu laden.'
+          : previous ? 'Die Änderung konnte nicht gespeichert werden.' : 'Die Erklärung konnte nicht hinterlegt werden.'
   } finally {
     registerSubmitting.value = false
   }
@@ -243,9 +248,12 @@ async function revoke(consent: ConsentRecord) {
     consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
     if (registerForm.directoryPersonId === updated.directoryPersonId) prefillRegisterForm(registerForm.directoryPersonId)
   } catch (error) {
-    registerError.value = errorCodeOf(error) === 'already_revoked'
-      ? 'Diese Einwilligung wurde bereits widerrufen.'
-      : 'Der Widerruf konnte nicht gespeichert werden.'
+    const code = errorCodeOf(error)
+    registerError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'already_revoked'
+        ? 'Diese Einwilligung wurde bereits widerrufen.'
+        : 'Der Widerruf konnte nicht gespeichert werden.'
   } finally {
     revokingId.value = null
   }
@@ -301,11 +309,13 @@ async function sendConsentRequest() {
     prefillRequestForm(requestForm.directoryPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
-    requestError.value = code === 'request_already_open'
-      ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.'
-      : code === 'guardian_required_for_minor'
-        ? GUARDIAN_REQUIRED_MESSAGE
-        : 'Die Anfrage konnte nicht versendet werden.'
+    requestError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'request_already_open'
+        ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.'
+        : code === 'guardian_required_for_minor'
+          ? GUARDIAN_REQUIRED_MESSAGE
+          : 'Die Anfrage konnte nicht versendet werden.'
   } finally {
     requestSubmitting.value = false
   }
@@ -318,9 +328,12 @@ async function resendRequest(request: ConsentRequest) {
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
     requestNotice.value = `Die Anfrage ist erneut an ${updated.recipientEmail} versendet.`
   } catch (error) {
-    requestError.value = errorCodeOf(error) === 'request_not_open'
-      ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
-      : 'Die Anfrage konnte nicht erneut gesendet werden.'
+    const code = errorCodeOf(error)
+    requestError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'request_not_open'
+        ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
+        : 'Die Anfrage konnte nicht erneut gesendet werden.'
   }
 }
 </script>
