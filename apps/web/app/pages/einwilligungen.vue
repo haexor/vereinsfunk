@@ -214,7 +214,8 @@ async function registerConsent() {
       consents.value = [created, ...consents.value]
     }
     registerNotice.value = previous ? 'Die Änderung ist gespeichert.' : 'Die Erklärung ist hinterlegt.'
-    registerForm.directoryPersonId = ''
+    // Die Person bleibt ausgewaehlt; das Formular zeigt jetzt den gespeicherten Stand.
+    prefillRegisterForm(registerForm.directoryPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
     registerError.value = code === 'guardian_required_for_minor'
@@ -265,9 +266,7 @@ const requestStored = computed(() => (requestForm.directoryPersonId ? storedCons
 
 // Vorbelegung: eine offene Anfrage zuerst (Adresse und angefragter Umfang), sonst der Umfang der
 // gespeicherten Einwilligung -- so fragt der Verein nicht versehentlich weniger an als schon gilt.
-watch(() => requestForm.directoryPersonId, (personId) => {
-  requestError.value = ''
-  if (personId) requestNotice.value = ''
+function prefillRequestForm(personId: string) {
   const open = personId ? openRequestOf(personId) : undefined
   const scope = open?.requestedScope ?? (personId ? currentConsentOf(personId)?.scopeStructured : undefined)
   requestForm.purposes = scope ? [...scope.purposes] : ['social_media']
@@ -275,6 +274,11 @@ watch(() => requestForm.directoryPersonId, (personId) => {
   requestForm.namingAllowed = scope?.namingAllowed ?? false
   requestForm.recipientEmail = open?.recipientEmail ?? ''
   requestForm.recipientRole = open?.recipientRole ?? 'guardian'
+}
+watch(() => requestForm.directoryPersonId, (personId) => {
+  requestError.value = ''
+  if (personId) requestNotice.value = ''
+  prefillRequestForm(personId)
 }, { flush: 'sync' })
 
 async function sendConsentRequest() {
@@ -294,7 +298,7 @@ async function sendConsentRequest() {
     }, ConsentRequestSchema)
     requests.value = [created, ...requests.value]
     requestNotice.value = `Die Anfrage ist an ${created.recipientEmail} versendet.`
-    requestForm.directoryPersonId = ''
+    prefillRequestForm(requestForm.directoryPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
     requestError.value = code === 'request_already_open'

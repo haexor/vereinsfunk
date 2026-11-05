@@ -133,6 +133,21 @@ describe('Vorbelegung nach Auswahl einer Person', () => {
     })
   })
 
+  it('laesst die Person nach dem Speichern ausgewaehlt und zeigt den gespeicherten Stand', async () => {
+    const { page, request } = await consentPage()
+    page.consents.value = [storedConsent({})]
+    const successor = storedConsent({ id: 'consent-2', createdAt: '2026-11-05T10:00:00+01:00', scopeStructured: { ...storedConsent({}).scopeStructured, purposes: ['social_media', 'website'] } })
+    request.mockImplementationOnce(async () => successor as unknown as { id: string })
+
+    page.registerForm.directoryPersonId = 'person-1'
+    page.registerForm.purposes = ['social_media', 'website']
+    await page.registerConsent()
+
+    // Vorher sprang die Auswahl nach dem Speichern zurueck auf "Auswählen".
+    expect(page.registerForm.directoryPersonId).toBe('person-1')
+    expect(page.registerForm.purposes).toEqual(['social_media', 'website'])
+  })
+
   it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {
     const { page, request } = await consentPage()
     page.consents.value = [storedConsent({ origin: 'digital' })]
