@@ -245,16 +245,21 @@ export async function computeConsentValidity(
   return { validFrom: `${signedAt}T00:00:00.000Z`, validUntil: validityMonths === null ? null : addMonthsToIsoDate(signedAt, validityMonths) }
 }
 
+// Liest ueber die Service Role, nicht als Aufrufer:in -- die Zeile bestimmt erst den Scope, gegen
+// den die Route danach consent.manage prueft. consent_records_select laesst nur Vereinsmitglieder
+// (organization_memberships) lesen; eine in ihre Abteilung eingeladene Abteilungsleitung hat keine
+// solche Zeile und bekam deshalb fuer jede Einwilligung ihrer Abteilung 404 -- Widerruf und
+// Abloesung scheiterten trotz consent.manage. Dasselbe Muster wie GET /v1/consents.
 export async function loadConsentRecordForScope(
-  client: SupabaseClient, params: { id: string },
+  service: SupabaseClient, params: { id: string },
 ): Promise<{ row: ConsentRecordRow; scope: PermissionScope } | 'not_found'> {
-  const existing = await client.from('consent_records').select(CONSENT_RECORD_SELECT).eq('id', params.id).maybeSingle()
+  const existing = await service.from('consent_records').select(CONSENT_RECORD_SELECT).eq('id', params.id).maybeSingle()
   if (existing.error) throw existing.error
   if (!existing.data) return 'not_found'
   const row = existing.data as ConsentRecordRow
   let departmentId: string | null = null
   if (row.directory_person_id) {
-    const person = await client.from('directory_people').select('department_id').eq('id', row.directory_person_id).maybeSingle()
+    const person = await service.from('directory_people').select('department_id').eq('id', row.directory_person_id).maybeSingle()
     if (person.error) throw person.error
     departmentId = (person.data?.department_id as string | null) ?? null
   }
