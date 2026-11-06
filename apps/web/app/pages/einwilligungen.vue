@@ -103,6 +103,9 @@ function formatDate(value: string): string {
   return new Date(value).toLocaleDateString('de-DE')
 }
 
+// 403 forbidden: die API prueft consent.manage fuer die Abteilung der Person. Trainer
+// (team_manager) haben es nicht (Plan 015) -- vorher sahen sie nur "konnte nicht gespeichert werden".
+const FORBIDDEN_MESSAGE = 'Dafür fehlt dir die Berechtigung. Einwilligungen pflegt die Vereins- oder Abteilungsleitung.'
 const GUARDIAN_REQUIRED_MESSAGE = 'Diese Person ist minderjährig. Eine Einwilligung muss von einer erziehungsberechtigten Person erteilt werden.'
 const MEDIA_KIND_REQUIRED_MESSAGE = 'Bitte mindestens eine Medienart auswählen.'
 function errorCodeOf(error: unknown): string | undefined {
@@ -169,8 +172,10 @@ async function registerConsent() {
   if (!registerForm.directoryPersonId) { registerError.value = 'Bitte eine Person wählen.'; return }
   if (registerForm.purposes.length === 0) { registerError.value = PURPOSE_REQUIRED_MESSAGE; return }
   if (registerForm.mediaKinds.length === 0) { registerError.value = MEDIA_KIND_REQUIRED_MESSAGE; return }
+  const submittedPersonId = registerForm.directoryPersonId
   registerSubmitting.value = true
   registerError.value = ''
+  registerNotice.value = ''
   const previous = registerSupersedes.value
   try {
     // Eine Erziehungsberechtigung kann nur bestaetigt sein, wenn die Rolle 'guardian' ist -- sonst
@@ -214,14 +219,17 @@ async function registerConsent() {
       consents.value = [created, ...consents.value]
     }
     registerNotice.value = previous ? 'Die Änderung ist gespeichert.' : 'Die Erklärung ist hinterlegt.'
-    registerForm.directoryPersonId = ''
+    // Die Person bleibt ausgewaehlt; das Formular zeigt jetzt den gespeicherten Stand.
+    if (registerForm.directoryPersonId === submittedPersonId) prefillRegisterForm(submittedPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
-    registerError.value = code === 'guardian_required_for_minor'
-      ? GUARDIAN_REQUIRED_MESSAGE
-      : code === 'already_superseded' || code === 'already_revoked'
-        ? 'Diese Einwilligung wurde inzwischen geändert oder widerrufen. Bitte die Seite neu laden.'
-        : previous ? 'Die Änderung konnte nicht gespeichert werden.' : 'Die Erklärung konnte nicht hinterlegt werden.'
+    registerError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'guardian_required_for_minor'
+        ? GUARDIAN_REQUIRED_MESSAGE
+        : code === 'already_superseded' || code === 'already_revoked'
+          ? 'Diese Einwilligung wurde inzwischen geändert oder widerrufen. Bitte die Seite neu laden.'
+          : previous ? 'Die Änderung konnte nicht gespeichert werden.' : 'Die Erklärung konnte nicht hinterlegt werden.'
   } finally {
     registerSubmitting.value = false
   }
@@ -242,9 +250,12 @@ async function revoke(consent: ConsentRecord) {
     consents.value = consents.value.map((item) => (item.id === updated.id ? updated : item))
     if (registerForm.directoryPersonId === updated.directoryPersonId) prefillRegisterForm(registerForm.directoryPersonId)
   } catch (error) {
-    registerError.value = errorCodeOf(error) === 'already_revoked'
-      ? 'Diese Einwilligung wurde bereits widerrufen.'
-      : 'Der Widerruf konnte nicht gespeichert werden.'
+    const code = errorCodeOf(error)
+    registerError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'already_revoked'
+        ? 'Diese Einwilligung wurde bereits widerrufen.'
+        : 'Der Widerruf konnte nicht gespeichert werden.'
   } finally {
     revokingId.value = null
   }
@@ -265,9 +276,7 @@ const requestStored = computed(() => (requestForm.directoryPersonId ? storedCons
 
 // Vorbelegung: eine offene Anfrage zuerst (Adresse und angefragter Umfang), sonst der Umfang der
 // gespeicherten Einwilligung -- so fragt der Verein nicht versehentlich weniger an als schon gilt.
-watch(() => requestForm.directoryPersonId, (personId) => {
-  requestError.value = ''
-  if (personId) requestNotice.value = ''
+function prefillRequestForm(personId: string) {
   const open = personId ? openRequestOf(personId) : undefined
   const scope = open?.requestedScope ?? (personId ? currentConsentOf(personId)?.scopeStructured : undefined)
   requestForm.purposes = scope ? [...scope.purposes] : ['social_media']
@@ -275,14 +284,21 @@ watch(() => requestForm.directoryPersonId, (personId) => {
   requestForm.namingAllowed = scope?.namingAllowed ?? false
   requestForm.recipientEmail = open?.recipientEmail ?? ''
   requestForm.recipientRole = open?.recipientRole ?? 'guardian'
+}
+watch(() => requestForm.directoryPersonId, (personId) => {
+  requestError.value = ''
+  if (personId) requestNotice.value = ''
+  prefillRequestForm(personId)
 }, { flush: 'sync' })
 
 async function sendConsentRequest() {
   if (!organizationId.value) return
   if (!requestForm.directoryPersonId) { requestError.value = 'Bitte eine Person wählen.'; return }
   if (requestForm.purposes.length === 0) { requestError.value = PURPOSE_REQUIRED_MESSAGE; return }
+  const submittedPersonId = requestForm.directoryPersonId
   requestSubmitting.value = true
   requestError.value = ''
+  requestNotice.value = ''
   try {
     const created = await api.request('/v1/consent-requests', {
       method: 'POST',
@@ -294,14 +310,16 @@ async function sendConsentRequest() {
     }, ConsentRequestSchema)
     requests.value = [created, ...requests.value]
     requestNotice.value = `Die Anfrage ist an ${created.recipientEmail} versendet.`
-    requestForm.directoryPersonId = ''
+    if (requestForm.directoryPersonId === submittedPersonId) prefillRequestForm(submittedPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
-    requestError.value = code === 'request_already_open'
-      ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.'
-      : code === 'guardian_required_for_minor'
-        ? GUARDIAN_REQUIRED_MESSAGE
-        : 'Die Anfrage konnte nicht versendet werden.'
+    requestError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'request_already_open'
+        ? 'Für diese Person und Adresse liegt bereits eine offene Anfrage vor.'
+        : code === 'guardian_required_for_minor'
+          ? GUARDIAN_REQUIRED_MESSAGE
+          : 'Die Anfrage konnte nicht versendet werden.'
   } finally {
     requestSubmitting.value = false
   }
@@ -314,9 +332,12 @@ async function resendRequest(request: ConsentRequest) {
     requests.value = requests.value.map((item) => (item.id === updated.id ? updated : item))
     requestNotice.value = `Die Anfrage ist erneut an ${updated.recipientEmail} versendet.`
   } catch (error) {
-    requestError.value = errorCodeOf(error) === 'request_not_open'
-      ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
-      : 'Die Anfrage konnte nicht erneut gesendet werden.'
+    const code = errorCodeOf(error)
+    requestError.value = code === 'forbidden'
+      ? FORBIDDEN_MESSAGE
+      : code === 'request_not_open'
+        ? 'Diese Anfrage ist nicht mehr offen und kann nicht erneut gesendet werden.'
+        : 'Die Anfrage konnte nicht erneut gesendet werden.'
   }
 }
 </script>

@@ -18,7 +18,7 @@ async function consentPage() {
   })
   const request = vi.fn(async () => ({ id: 'created' }))
   const page = (await runInNewContext(
-    `(async () => { ${compiled.outputText}; return { registerForm, requestForm, registerConsent, sendConsentRequest, registerError, requestError, consents, requests }; })()`,
+    `(async () => { ${compiled.outputText}; return { registerForm, requestForm, registerConsent, sendConsentRequest, registerError, requestError, registerNotice, requestNotice, consents, requests }; })()`,
     {
       exports: {},
       FormData,
@@ -47,6 +47,8 @@ async function consentPage() {
     sendConsentRequest: () => Promise<void>
     registerError: Ref<string>
     requestError: Ref<string>
+    registerNotice: Ref<string>
+    requestNotice: Ref<string>
     consents: Ref<contracts.ConsentRecord[]>
     requests: Ref<contracts.ConsentRequest[]>
   }
@@ -131,6 +133,65 @@ describe('Vorbelegung nach Auswahl einer Person', () => {
       supersededBy: 'created',
       status: 'superseded',
     })
+  })
+
+  it('laesst die Person nach dem Speichern ausgewaehlt und zeigt den gespeicherten Stand', async () => {
+    const { page, request } = await consentPage()
+    page.consents.value = [storedConsent({})]
+    const successor = storedConsent({ id: 'consent-2', createdAt: '2026-11-05T10:00:00+01:00', scopeStructured: { ...storedConsent({}).scopeStructured, purposes: ['social_media', 'website'] } })
+    request.mockImplementationOnce(async () => successor as unknown as { id: string })
+
+    page.registerForm.directoryPersonId = 'person-1'
+    page.registerForm.purposes = ['social_media', 'website']
+    await page.registerConsent()
+
+    // Vorher sprang die Auswahl nach dem Speichern zurueck auf "Auswählen".
+    expect(page.registerForm.directoryPersonId).toBe('person-1')
+    expect(page.registerForm.purposes).toEqual(['social_media', 'website'])
+  })
+
+  it.each(['paper', 'digital'])('überschreibt beim verspäteten %s-Abschluss nicht das Formular der inzwischen gewählten Person', async (kind) => {
+    const { page, request } = await consentPage()
+    let resolveRequest!: (value: { id: string }) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve }))
+    const form = kind === 'paper' ? page.registerForm : page.requestForm
+    form.directoryPersonId = 'person-1'
+    const pending = kind === 'paper' ? page.registerConsent() : page.sendConsentRequest()
+
+    form.directoryPersonId = 'person-2'
+    form.purposes = ['internal']
+    resolveRequest({ id: 'created' })
+    await pending
+
+    expect(form.directoryPersonId).toBe('person-2')
+    expect(form.purposes).toEqual(['internal'])
+  })
+
+  it.each(['paper', 'digital'])('clears the previous %s success notice when a new submission starts', async (kind) => {
+    const { page, request } = await consentPage()
+    let resolveRequest!: (value: { id: string }) => void
+    request.mockImplementationOnce(() => new Promise((resolve) => { resolveRequest = resolve }))
+    const notice = kind === 'paper' ? page.registerNotice : page.requestNotice
+    const form = kind === 'paper' ? page.registerForm : page.requestForm
+    notice.value = 'Vorheriger Erfolg'
+    form.directoryPersonId = 'person-1'
+    const pending = kind === 'paper' ? page.registerConsent() : page.sendConsentRequest()
+
+    expect(notice.value).toBe('')
+    resolveRequest({ id: 'created' })
+    await pending
+  })
+
+  it.each(['paper', 'digital'])('nennt beim %s-Formular eine fehlende Berechtigung als Grund', async (kind) => {
+    const { page, request } = await consentPage()
+    request.mockRejectedValueOnce(new ApiRequestError('forbidden', 403))
+    const form = kind === 'paper' ? page.registerForm : page.requestForm
+    form.directoryPersonId = 'person-1'
+    await (kind === 'paper' ? page.registerConsent() : page.sendConsentRequest())
+    // Vorher meldete die Seite einem Trainer ohne consent.manage nur "konnte nicht gespeichert werden".
+    expect((kind === 'paper' ? page.registerError : page.requestError).value).toBe(
+      'Dafür fehlt dir die Berechtigung. Einwilligungen pflegt die Vereins- oder Abteilungsleitung.',
+    )
   })
 
   it('legt neben einer digital erteilten Einwilligung eine neue Papiererklaerung an', async () => {

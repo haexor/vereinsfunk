@@ -235,8 +235,7 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.get('/v1/consents/:id', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const loaded = await loadConsentRecordForScope(client, params)
+    const loaded = await loadConsentRecordForScope(supabaseClients.forService(), params)
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
     return reply.code(200).send(mapConsentRecordRow(loaded.row, new Date()))
@@ -248,11 +247,10 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
   app.get('/v1/consents/:id/evidence-url', async (request, reply) => {
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const loaded = await loadConsentRecordForScope(client, params)
+    const service = supabaseClients.forService()
+    const loaded = await loadConsentRecordForScope(service, params)
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
-    const service = supabaseClients.forService()
     const evidence = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
     if (evidence.error) throw evidence.error
     // Ohne hochgeladene Datei oder nach Ablauf der Nachweisfrist (retention.ts) ist evidence_path NULL.
@@ -267,13 +265,12 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     if (!(await requireAuth(request, reply))) return
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = RevokeConsentRequestSchema.parse(request.body)
-    const client = supabaseClients.forUser(request.auth!.accessToken)
-    const loaded = await loadConsentRecordForScope(client, params)
+    const service = supabaseClients.forService()
+    const loaded = await loadConsentRecordForScope(service, params)
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
     if (loaded.row.revoked_at !== null) return reply.code(409).send({ error: 'already_revoked', correlationId: request.id })
 
-    const service = supabaseClients.forService()
     // .is('revoked_at', null) macht Pruefung und Schreibvorgang atomar -- der vorige Read-Check
     // allein liesse zwei gleichzeitige Widerrufe den zweiten Grund/Widerrufenden ueberschreiben
     // (gefunden im Code-Review, gleiches Muster wie die oeffentliche Widerrufsroute unten).
@@ -301,7 +298,8 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     const params = z.object({ id: UuidSchema }).parse(request.params)
     const input = SupersedeConsentRequestSchema.parse(request.body)
     const client = supabaseClients.forUser(request.auth!.accessToken)
-    const loaded = await loadConsentRecordForScope(client, params)
+    const service = supabaseClients.forService()
+    const loaded = await loadConsentRecordForScope(service, params)
     if (loaded === 'not_found') return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     if (!(await requirePermission(request, reply, 'consent.manage', loaded.scope))) return
     if (loaded.row.superseded_by !== null) return reply.code(409).send({ error: 'already_superseded', correlationId: request.id })
@@ -320,7 +318,6 @@ export function registerConsentRoutes(app: FastifyInstance, context: ApiRouteCon
     }
 
     const validity = await computeConsentValidity(client, loaded.row.organization_id, loaded.scope.departmentId ?? null, input.signedAt)
-    const service = supabaseClients.forService()
     const evidenceOfOriginal = await service.from('consent_records').select('evidence_bucket, evidence_path').eq('id', params.id).single()
     if (evidenceOfOriginal.error) throw evidenceOfOriginal.error
 

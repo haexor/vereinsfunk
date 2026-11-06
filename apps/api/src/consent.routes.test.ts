@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 import { DEPARTMENT_ID, ORGANIZATION_ID, USER_ID, chain, denyingRoleProvider, grantingRoleProvider, organizationManagerRoleProvider, signAccessToken, startApp } from './testSupport.js'
 import type { SupabaseClient } from '@supabase/supabase-js'
 import type { SupabaseClientFactory } from './app.js'
+import type { RoleProvider } from './auth.js'
 import { addMonthsToIsoDate, hashPublicToken } from './services/consent.js'
 
 describe('Paket 015: Einwilligungsverwaltung', () => {
@@ -21,6 +22,16 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       ...overrides,
     }
   }
+
+  // Die Routen fuer eine einzelne Einwilligung lesen die Zeile und die Abteilung der Person ueber
+  // die Service Role (loadConsentRecordForScope); der Nachweis kommt danach aus derselben Tabelle.
+  function consentRecordsTable(row: unknown, extra: Record<string, unknown> = {}, evidence: unknown = { evidence_bucket: 'raw-media', evidence_path: null }) {
+    return {
+      select: (columns: string) => chain({ data: columns === 'evidence_bucket, evidence_path' ? evidence : row, error: null }),
+      ...extra,
+    }
+  }
+  const PERSON_IN_DEPARTMENT = { data: { department_id: DEPARTMENT_ID }, error: null }
 
   function consentScopeAndFields() {
     return {
@@ -141,8 +152,8 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
 
   it('returns 404 when revoking a consent record that does not exist', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () => ({ from: (table: string) => { if (table === 'consent_records') return chain({ data: null, error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () => ({ from: (table: string) => { if (table === 'consent_records') return chain({ data: null, error: null }); throw new Error(`unexpected table: ${table}`) } }) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -155,15 +166,15 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
 
   it('rejects revoking a consent record without consent.manage in the linked department', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () =>
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
-            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'consent_records') return consentRecordsTable(consentRecordRow())
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             throw new Error(`unexpected table: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: denyingRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -177,18 +188,12 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
   it('revokes a consent record and audits the action', async () => {
     const auditRows: Record<string, unknown>[] = []
     const clients: SupabaseClientFactory = {
-      forUser: () =>
-        ({
-          from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
-            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
-            throw new Error(`unexpected table: ${table}`)
-          },
-        }) as unknown as SupabaseClient,
+      forUser: () => ({}) as unknown as SupabaseClient,
       forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return { update: () => chain({ data: consentRecordRow({ revoked_at: '2026-08-08T00:00:00Z', revoked_by: 'organization' }), error: null }) }
+            if (table === 'consent_records') return consentRecordsTable(consentRecordRow(), { update: () => chain({ data: consentRecordRow({ revoked_at: '2026-08-08T00:00:00Z', revoked_by: 'organization' }), error: null }) })
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             if (table === 'audit_events') return { insert: async (row: Record<string, unknown>) => { auditRows.push(row); return { error: null } } }
             throw new Error(`unexpected table in service fake: ${table}`)
           },
@@ -208,15 +213,15 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
 
   it('refuses to revoke an already-revoked consent record', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () =>
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z' }), error: null })
-            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'consent_records') return consentRecordsTable(consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z' }))
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             throw new Error(`unexpected table: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => ({}) as unknown as SupabaseClient,
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -229,15 +234,15 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
 
   it('refuses to supersede a revoked consent record instead of silently undoing the revocation', async () => {
     const clients: SupabaseClientFactory = {
-      forUser: () =>
+      forUser: () => ({}) as unknown as SupabaseClient,
+      forService: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z', revoked_by: 'guardian' }), error: null })
-            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID }, error: null })
+            if (table === 'consent_records') return consentRecordsTable(consentRecordRow({ revoked_at: '2026-08-01T00:00:00Z', revoked_by: 'guardian' }), { insert: () => { throw new Error('a revoked consent must not get a successor') } })
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             throw new Error(`unexpected table: ${table}`)
           },
         }) as unknown as SupabaseClient,
-      forService: () => { throw new Error('a revoked consent must not get a successor') },
     }
     const app = await startApp({ roleProvider: organizationManagerRoleProvider, supabaseClients: clients })
     const token = await signAccessToken(USER_ID)
@@ -433,7 +438,6 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
             if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
             if (table === 'policy_settings') return chain(TWELVE_MONTH_POLICY)
             throw new Error(`unexpected table: ${table}`)
@@ -444,11 +448,12 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
           from: (table: string) => {
             if (table === 'consent_records') {
               return {
-                select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: `organizations/${ORGANIZATION_ID}/consents/${CONSENT_ID}/nachweis` }, error: null }),
+                select: consentRecordsTable(consentRecordRow(), {}, { evidence_bucket: 'raw-media', evidence_path: `organizations/${ORGANIZATION_ID}/consents/${CONSENT_ID}/nachweis` }).select,
                 insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, valid_from: row.valid_from, valid_until: row.valid_until }), error: null }) },
                 update: () => chain({ data: { id: CONSENT_ID }, error: null }),
               }
             }
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in service fake: ${table}`)
           },
@@ -474,7 +479,6 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       forUser: () =>
         ({
           from: (table: string) => {
-            if (table === 'consent_records') return chain({ data: consentRecordRow(), error: null })
             if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
             if (table === 'policy_settings') return chain({ data: [], error: null })
             throw new Error(`unexpected table: ${table}`)
@@ -485,11 +489,12 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
           from: (table: string) => {
             if (table === 'consent_records') {
               return {
-                select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null }),
+                select: consentRecordsTable(consentRecordRow()).select,
                 insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) },
                 update: () => chain({ data: { id: CONSENT_ID }, error: null }),
               }
             }
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
             if (table === 'audit_events') return { insert: async () => ({ error: null }) }
             throw new Error(`unexpected table in service fake: ${table}`)
           },
@@ -515,7 +520,6 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     const clients: SupabaseClientFactory = {
       forUser: () => ({
         from: (table: string) => {
-          if (table === 'consent_records') return chain({ data: consentRecordRow({ scope: 'Nur Mannschaftsfotos bei Heimspielen', scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null } }), error: null })
           if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
           if (table === 'policy_settings') return chain({ data: [], error: null })
           throw new Error(`unexpected table: ${table}`)
@@ -524,10 +528,11 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
       forService: () => ({
         from: (table: string) => {
           if (table === 'consent_records') return {
-            select: () => chain({ data: { evidence_bucket: 'raw-media', evidence_path: null }, error: null }),
+            select: consentRecordsTable(consentRecordRow({ scope: 'Nur Mannschaftsfotos bei Heimspielen', scope_structured: { purposes: ['social_media'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null } })).select,
             insert: (row: Record<string, unknown>) => { insertedRow = row; return chain({ data: consentRecordRow({ id: row.id, scope: row.scope, signer_name: row.signer_name }), error: null }) },
             update: () => chain({ data: { id: CONSENT_ID }, error: null }),
           }
+          if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
           if (table === 'audit_events') return { insert: async () => ({ error: null }) }
           throw new Error(`unexpected table in service fake: ${table}`)
         },
@@ -545,6 +550,70 @@ describe('Paket 015: Einwilligungsverwaltung', () => {
     })
     expect(response.statusCode).toBe(201)
     expect(insertedRow?.scope).toBe('Nur Mannschaftsfotos bei Heimspielen')
+  })
+
+  describe('Abteilungsleitung ohne Vereinsmitgliedschaft', () => {
+    // Eine in ihre Abteilung eingeladene Abteilungsleitung hat nur department_memberships. Die
+    // RLS-Policy consent_records_select (is_organization_member) zeigt ihr deshalb keine Zeile --
+    // der Nutzer-Fake liefert fuer consent_records wie die echte Datenbank nichts.
+    const OTHER_DEPARTMENT_ID = '15000000-7000-4000-8000-000000000001'
+    function departmentAdminOf(departmentId: string): RoleProvider {
+      return { async rolesForScope(_auth, scope) { return scope.departmentId === departmentId ? ['department_admin'] : [] } }
+    }
+    function clientsFor(insertedRows: Record<string, unknown>[]): SupabaseClientFactory {
+      return {
+        forUser: () => ({
+          from: (table: string) => {
+            if (table === 'consent_records') return chain({ data: null, error: null })
+            if (table === 'directory_people') return chain({ data: { department_id: DEPARTMENT_ID, is_minor: false }, error: null })
+            if (table === 'policy_settings') return chain({ data: [], error: null })
+            throw new Error(`unexpected table: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+        forService: () => ({
+          from: (table: string) => {
+            if (table === 'consent_records') return consentRecordsTable(consentRecordRow(), {
+              insert: (row: Record<string, unknown>) => { insertedRows.push(row); return chain({ data: consentRecordRow({ id: row.id }), error: null }) },
+              update: () => chain({ data: consentRecordRow({ revoked_at: '2026-11-06T00:00:00Z', revoked_by: 'organization' }), error: null }),
+            })
+            if (table === 'directory_people') return chain(PERSON_IN_DEPARTMENT)
+            if (table === 'audit_events') return { insert: async () => ({ error: null }) }
+            throw new Error(`unexpected table in service fake: ${table}`)
+          },
+        }) as unknown as SupabaseClient,
+      }
+    }
+    const supersedePayload = {
+      scopeStructured: { purposes: ['social_media', 'website'], platforms: null, mediaKinds: ['photo'], contexts: null, namingAllowed: false, departmentIds: null },
+      signedAt: '2026-08-01', signerRole: 'guardian', guardianConfirmed: true,
+    }
+
+    it('supersedes a consent of a person in the own department', async () => {
+      const insertedRows: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: departmentAdminOf(DEPARTMENT_ID), supabaseClients: clientsFor(insertedRows) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`, headers: { authorization: `Bearer ${token}` }, payload: supersedePayload })
+      expect(response.statusCode).toBe(201)
+      expect(insertedRows).toHaveLength(1)
+    })
+
+    it('revokes a consent of a person in the own department', async () => {
+      const app = await startApp({ roleProvider: departmentAdminOf(DEPARTMENT_ID), supabaseClients: clientsFor([]) })
+      const token = await signAccessToken(USER_ID)
+      const response = await app.inject({ method: 'POST', url: `/v1/consents/${CONSENT_ID}/revoke`, headers: { authorization: `Bearer ${token}` }, payload: { revokedBy: 'organization' } })
+      expect(response.statusCode).toBe(200)
+    })
+
+    it('still refuses a department admin of another department', async () => {
+      const insertedRows: Record<string, unknown>[] = []
+      const app = await startApp({ roleProvider: departmentAdminOf(OTHER_DEPARTMENT_ID), supabaseClients: clientsFor(insertedRows) })
+      const token = await signAccessToken(USER_ID)
+      const supersede = await app.inject({ method: 'POST', url: `/v1/consents/${CONSENT_ID}/supersede`, headers: { authorization: `Bearer ${token}` }, payload: supersedePayload })
+      const revoke = await app.inject({ method: 'POST', url: `/v1/consents/${CONSENT_ID}/revoke`, headers: { authorization: `Bearer ${token}` }, payload: { revokedBy: 'organization' } })
+      const read = await app.inject({ method: 'GET', url: `/v1/consents/${CONSENT_ID}`, headers: { authorization: `Bearer ${token}` } })
+      expect([supersede.statusCode, revoke.statusCode, read.statusCode]).toEqual([403, 403, 403])
+      expect(insertedRows).toHaveLength(0)
+    })
   })
 
   // Wie chain(), protokolliert aber jeden Aufruf samt Argumenten -- fuer Tests, die pruefen, WELCHE

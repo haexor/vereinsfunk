@@ -239,7 +239,7 @@ function statusClass(photo: PlayerboardPhoto): string {
         </li>
       </ul>
       <p v-if="reviewMissingConsent.length > 0" class="mt-3 text-sm font-semibold text-amber-800" role="alert">
-        Ohne gültige Einwilligung: <template v-for="(player, index) in reviewMissingConsent" :key="player.id"><PersonLink :person-id="player.directoryPersonId" target="_blank" rel="noopener">{{ player.firstName }} {{ player.lastName }}</PersonLink><template v-if="index < reviewMissingConsent.length - 1">, </template></template>. Das Foto bleibt intern. Unter „Einwilligungen“ braucht jede dieser Personen eine gültige Einwilligung mit dem Zweck „Vereinswebsite“ und der Medienart Foto; eine bestehende Papiererklärung lässt sich dort bearbeiten.
+        Ohne gültige Einwilligung: <template v-for="(player, index) in reviewMissingConsent" :key="player.id"><PersonLink :person-id="player.directoryPersonId" target="_blank" rel="noopener">{{ player.firstName }} {{ player.lastName }}</PersonLink><template v-if="index < reviewMissingConsent.length - 1">, </template></template>. Das Foto bleibt intern. Jede dieser Personen braucht eine gültige Einwilligung mit dem Zweck „Vereinswebsite“ und der Medienart Foto. Die pflegt die Vereins- oder Abteilungsleitung unter „Einwilligungen“.
       </p>
       <label class="mt-4 flex min-h-11 cursor-pointer items-center gap-3">
         <input v-model="reviewAllListed" type="checkbox" class="h-5 w-5 accent-forest" />
