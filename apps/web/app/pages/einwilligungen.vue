@@ -172,8 +172,10 @@ async function registerConsent() {
   if (!registerForm.directoryPersonId) { registerError.value = 'Bitte eine Person wählen.'; return }
   if (registerForm.purposes.length === 0) { registerError.value = PURPOSE_REQUIRED_MESSAGE; return }
   if (registerForm.mediaKinds.length === 0) { registerError.value = MEDIA_KIND_REQUIRED_MESSAGE; return }
+  const submittedPersonId = registerForm.directoryPersonId
   registerSubmitting.value = true
   registerError.value = ''
+  registerNotice.value = ''
   const previous = registerSupersedes.value
   try {
     // Eine Erziehungsberechtigung kann nur bestaetigt sein, wenn die Rolle 'guardian' ist -- sonst
@@ -218,7 +220,7 @@ async function registerConsent() {
     }
     registerNotice.value = previous ? 'Die Änderung ist gespeichert.' : 'Die Erklärung ist hinterlegt.'
     // Die Person bleibt ausgewaehlt; das Formular zeigt jetzt den gespeicherten Stand.
-    prefillRegisterForm(registerForm.directoryPersonId)
+    if (registerForm.directoryPersonId === submittedPersonId) prefillRegisterForm(submittedPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
     registerError.value = code === 'forbidden'
@@ -293,8 +295,10 @@ async function sendConsentRequest() {
   if (!organizationId.value) return
   if (!requestForm.directoryPersonId) { requestError.value = 'Bitte eine Person wählen.'; return }
   if (requestForm.purposes.length === 0) { requestError.value = PURPOSE_REQUIRED_MESSAGE; return }
+  const submittedPersonId = requestForm.directoryPersonId
   requestSubmitting.value = true
   requestError.value = ''
+  requestNotice.value = ''
   try {
     const created = await api.request('/v1/consent-requests', {
       method: 'POST',
@@ -306,7 +310,7 @@ async function sendConsentRequest() {
     }, ConsentRequestSchema)
     requests.value = [created, ...requests.value]
     requestNotice.value = `Die Anfrage ist an ${created.recipientEmail} versendet.`
-    prefillRequestForm(requestForm.directoryPersonId)
+    if (requestForm.directoryPersonId === submittedPersonId) prefillRequestForm(submittedPersonId)
   } catch (error) {
     const code = errorCodeOf(error)
     requestError.value = code === 'forbidden'
