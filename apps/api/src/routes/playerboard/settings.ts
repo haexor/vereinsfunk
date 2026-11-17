@@ -130,7 +130,7 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     // Eine gleichzeitige erste Speicherung kann den Unique-Index der Ebene treffen. Dann wurde
     // die Zeile parallel angelegt; der zweite Versuch schreibt in diese vorhandene Zeile.
     let write = await writeLevelRow()
-    if (write.error?.code === '23505' && !(write.error.message ?? '').includes('public_slug')) write = await writeLevelRow()
+    if (write.error?.code === '23505') write = await writeLevelRow()
     if (write.error) {
       if (sendDatabaseError(request, reply, write.error)) return
       throw write.error

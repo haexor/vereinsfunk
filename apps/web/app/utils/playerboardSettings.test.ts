@@ -10,7 +10,8 @@ function entry(overrides: { own?: Partial<ScopePlayerboardSettings['own']>; effe
     scope: 'team', scopeId: ID, name: 'U13', departmentId: ID, canEdit: true, publicPath: null,
     own: {
       seasonStart: null, statsVisibility: null, overridableFields: [], teamCategoriesAllowed: null, publicSharingAllowed: null,
-      publicTrainingsEnabled: null, publicPointsEnabled: null, publicVeoStatsEnabled: null, publicPhotosEnabled: null, publicSlug: null, ...overrides.own,
+      publicTrainingsEnabled: null, publicPointsEnabled: null, publicVeoStatsEnabled: null, publicPhotosEnabled: null,
+      publicPlayerNameFormat: 'initials', publicSlug: null, ...overrides.own,
     },
     effective: { seasonStart: null, statsVisibility: 'team', teamCategoriesAllowed: true, publicSharingAllowed: true, ...overrides.effective },
     locked: { seasonStart: false, statsVisibility: false, ...overrides.locked },

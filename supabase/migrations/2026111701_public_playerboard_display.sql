@@ -19,8 +19,8 @@ stable
 security definer
 set search_path = public, pg_temp
 as $$
-  select left(coalesce(nullif(authz.playerboard_slug_part(department.name), ''), 'abteilung'), 20)
-      || '-' || left(coalesce(nullif(authz.playerboard_slug_part(team.name), ''), 'mannschaft'), 20)
+  select rtrim(left(coalesce(nullif(authz.playerboard_slug_part(department.name), ''), 'abteilung'), 20), '-')
+      || '-' || rtrim(left(coalesce(nullif(authz.playerboard_slug_part(team.name), ''), 'mannschaft'), 20), '-')
       || '-' || team.id::text
     from public.teams team
     join public.departments department
