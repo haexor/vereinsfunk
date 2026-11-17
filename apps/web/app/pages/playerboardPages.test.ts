@@ -121,7 +121,7 @@ describe('PlayerBoard-Seiten', () => {
 
     expect(page.indexOf('PublicTeamRouteParamsSchema.safeParse')).toBeGreaterThan(-1)
     expect(page.indexOf('PublicTeamRouteParamsSchema.safeParse')).toBeLessThan(page.indexOf('useAsyncData'))
-    expect(page).toContain('const cacheKey = (name: string) => `public-team-${name}-${orgSlug}-${departmentSlug}-${teamSlug}`')
+    expect(page).toContain('publicTeamPageCacheKey(name, orgSlug, departmentSlug, teamSlug)')
     expect(page.match(/cacheKey\('(team|trainings|training|ranking)'\)/g)).toHaveLength(4)
     expect(page).not.toMatch(/useAsyncData<[^(]*\(\s*`public-team-/)
   })
