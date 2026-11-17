@@ -12,7 +12,7 @@ import {
   type ScopePlayerboardSettings,
 } from '@vereinsfunk/contracts'
 import { playerboardErrorMessage } from '../../utils/playerboardErrors'
-import { replaceableState, restrictionState, settingsPatch, suggestPublicSlug } from '../../utils/playerboardSettings'
+import { replaceableState, restrictionState, settingsPatch } from '../../utils/playerboardSettings'
 
 // Paket 052, PR 3: PlayerBoard-Einstellungen je Ebene. Saisonbeginn und Sichtbarkeit gibt eine
 // Ebene vor; darunter laesst sich nur abweichen, wenn sie das freigibt (eine Ebene weit).
@@ -273,7 +273,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
 
       <section v-if="selectedScope === 'team'" class="card mb-5 p-5" aria-labelledby="public-heading">
         <h2 id="public-heading" class="font-display text-base font-bold text-ink">Öffentliche Mannschaftsseite</h2>
-        <p class="mt-1 text-xs text-[#6c756f]">Ohne Anmeldung erreichbar. Spieler erscheinen dort nur mit Rückennummer und Initialen, z. B. „#7 M. K.“ – nie mit Namen.</p>
+        <p class="mt-1 text-xs text-[#6c756f]">Ohne Anmeldung erreichbar. Die Namensanzeige lässt sich für diese Mannschaft einstellen.</p>
         <p v-if="!entry.effective.publicSharingAllowed" class="mt-3 rounded-xl bg-[#eef1ea] p-3 text-sm text-[#5b625d]">
           <Lock :size="14" class="mr-1 inline" /> Von {{ levelAbove }} nicht erlaubt.
         </p>
@@ -297,22 +297,18 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
             </label>
           </div>
           <label class="mt-3 grid max-w-md gap-1.5 text-xs font-semibold text-[#5b625d]">
-            Adresse der Seite
-            <span class="flex gap-2">
-              <input
-                :value="draft.publicSlug ?? ''"
-                :disabled="!canEdit"
-                maxlength="80"
-                pattern="[a-z0-9]+(-[a-z0-9]+)*"
-                :placeholder="suggestPublicSlug(entry.name)"
-                :class="[inputClass, 'min-w-0 flex-1']"
-                @input="draft.publicSlug = ($event.target as HTMLInputElement).value.trim().toLowerCase() || null"
-              />
-              <button v-if="canEdit && !draft.publicSlug" type="button" class="focus-ring min-h-11 rounded-xl border border-[#dfe0d9] px-3 text-xs font-semibold text-ink" @click="draft.publicSlug = suggestPublicSlug(entry.name)">Vorschlag</button>
-            </span>
-            <span class="font-normal text-[#9aa096]">Kleinbuchstaben, Ziffern und Bindestriche.</span>
+            Spielernamen auf der öffentlichen Seite
+            <select v-model="draft.publicPlayerNameFormat" :disabled="!canEdit" :class="inputClass">
+              <option value="initials">Initialen (M. K.)</option>
+              <option value="first_name_last_initial">Vorname und Nachname abgekürzt (Max K.)</option>
+              <option value="full_name">Vollständiger Name (Max König)</option>
+            </select>
           </label>
-          <div v-if="publicUrl && !dirty" class="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#f6f8f3] p-3">
+          <div class="mt-3 grid max-w-md gap-1.5 text-xs font-semibold text-[#5b625d]">
+            Adresse der Seite
+            <span class="font-normal text-[#6c756f]">Wird automatisch aus Vereins-, Abteilungs- und Mannschaftsnamen gebildet.</span>
+          </div>
+          <div v-if="publicUrl" class="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#f6f8f3] p-3">
             <code class="min-w-0 flex-1 break-all text-xs text-ink">{{ publicUrl }}</code>
             <button type="button" class="focus-ring inline-flex min-h-11 items-center gap-1.5 rounded-xl border border-[#dfe0d9] bg-white px-3 text-xs font-semibold text-ink" @click="copyLink">
               <Copy :size="14" /> {{ copied ? 'Kopiert' : 'Link kopieren' }}

@@ -22,8 +22,8 @@ import { PublicTeamRouteParamsSchema } from '../../../utils/publicTeamPage'
 import { deriveSidebarPalette } from '../../../utils/sidebarBrand'
 
 // Paket 052, PR 4: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum,
-// Paket 020). Spieler erscheinen nur als "#7 M. K." -- die Bezeichnung bildet die Datenbank, die
-// Seite bekommt nie Namen. Fotos nur nach bestandener Einzelbild-Pruefung, als kurzlebige Links.
+// Paket 020). Das Datenbank-Label folgt dem gewählten Mannschaftsformat; Fotos kommen nur nach
+// bestandener Einzelbild-Pruefung als kurzlebige Links.
 // Öffentliche Trainings nutzen dieselbe Grenze: Datum, Kategorie, Wert und anonymes Label; freie
 // Titel, Notizen und interne Personenfelder bleiben vollständig intern.
 // Anders als das Impressum mit noindex: in Jugendmannschaften sind die Spieler Kinder.
