@@ -46,16 +46,16 @@ Eine berechtigte Person kopiert in den PlayerBoard-Einstellungen die öffentlich
 
 ### User Story 3 - Öffentliche API-Endpunkte und Zugriffsschutz folgen dem neuen Pfad (Priority: P1)
 
-Die anonymen Datenabfragen der öffentlichen Seite (Mannschaftsinfo, Trainingsliste, Trainingsdetail, Veo-Werte, Fotos, Rangliste) lösen die Mannschaft über Verein, Abteilung und Mannschaft auf. Die Anmeldeweiche lässt genau die dreiteilige Seitenadresse ohne Anmeldung durch.
+Die anonymen Datenabfragen der öffentlichen Seite (Mannschaftsinfo, Trainingsliste, Trainingsdetail, Veo-Werte, Fotos, Rangliste) lösen die Mannschaft über Verein, Abteilung und Mannschaft auf. Die Anmeldeweiche lässt genau die dreiteilige Seitenadresse ohne Anmeldung durch. Die gültige alte zweiteilige Adresse bleibt ebenfalls ohne Anmeldung erreichbar, liefert aber öffentlich eine 404 ohne Weiterleitung.
 
 **Why this priority**: Die serverseitige Prüfung ist die eigentliche Datenschutzgrenze. Sie darf durch die Umstellung weder aufgeweicht noch umgangen werden.
 
-**Independent Test**: Alle öffentlichen Endpunkte anonym mit gültigem und mit ungültigem Segmentsatz aufrufen und alle anderen Pfade unter `/mannschaft` ohne Anmeldung aufrufen.
+**Independent Test**: Alle öffentlichen Endpunkte anonym mit gültigem und mit ungültigem Segmentsatz aufrufen; die alte zweiteilige Adresse anonym als 404 ohne Weiterleitung prüfen und alle anderen ungültigen Pfade unter `/mannschaft` ohne Anmeldung aufrufen.
 
 **Acceptance Scenarios**:
 
 1. **Given** eine freigegebene Mannschaft, **When** jeder öffentliche Endpunkt mit den drei Segmenten aufgerufen wird, **Then** liefert er dieselben Daten wie vor der Umstellung.
-2. **Given** ein Pfad unter `/mannschaft` mit weniger oder mehr als drei Segmenten, einem leeren Segment, Großbuchstaben, abschließendem Schrägstrich oder `..`, **When** er ohne Anmeldung aufgerufen wird, **Then** leitet die Anmeldeweiche zur Anmeldung um.
+2. **Given** ein ungültiger Pfad unter `/mannschaft` mit weniger oder mehr als drei Segmenten, einem leeren Segment, Großbuchstaben, abschließendem Schrägstrich oder `..`, **When** er ohne Anmeldung aufgerufen wird, **Then** leitet die Anmeldeweiche zur Anmeldung um. Die Ausnahme ist genau die gültige alte zweiteilige Adresse `/mannschaft/<verein>/<mannschaft>`; sie liefert ohne Anmeldung eine 404 ohne Weiterleitung.
 3. **Given** eine Mannschaft, deren öffentliche Seite oder deren Datenbereich auf Vereins-, Abteilungs- oder Mannschaftsebene nicht freigegeben ist, **When** ein öffentlicher Endpunkt mit den drei Segmenten aufgerufen wird, **Then** liefert er keine Nutzdaten und keinen Hinweis auf die Existenz.
 
 ---
@@ -97,7 +97,7 @@ Bestehende Mannschaften erhalten bei der Migration automatisch ihre dreiteilige 
 - **FR-003**: Das letzte Segment MUSS ausschließlich aus dem normalisierten Mannschaftsnamen bestehen. Es DARF keinen UUID-, ID- oder Zähler-Präfix beziehungsweise -Suffix enthalten.
 - **FR-004**: Die Auflösung einer öffentlichen Adresse MUSS Verein, Abteilung und Mannschaft gemeinsam prüfen; ein Segmentsatz, dessen Segmente nicht zur selben Verein-Abteilung-Mannschaft-Kette gehören, MUSS wie eine unbekannte Mannschaft behandelt werden.
 - **FR-005**: Alle öffentlichen API-Endpunkte (Mannschaftsinfo, Trainingsliste, Trainingsdetail, Rangliste, Veo- und Fotoendpunkte) MÜSSEN die Mannschaft über die drei Segmente identifizieren.
-- **FR-006**: Die Anmeldeweiche MUSS genau Pfade mit drei nicht leeren Slug-Segmenten unter `/mannschaft` ohne Anmeldung durchlassen; jeder andere Pfad unter `/mannschaft` MUSS hinter der Anmeldung bleiben.
+- **FR-006**: Die Anmeldeweiche MUSS Pfade mit genau drei nicht leeren Slug-Segmenten unter `/mannschaft` ohne Anmeldung zur öffentlichen Seite durchlassen. Genau zweiteilige Pfade mit gültigen Vereins- und Mannschaftsslugs im bisherigen Format MUSS sie ebenfalls ohne Anmeldung zur 404 ohne Weiterleitung durchlassen; jeder andere ungültige Pfad unter `/mannschaft` MUSS hinter der Anmeldung bleiben.
 - **FR-007**: Alle in der Anwendung erzeugten und kopierten öffentlichen Links (Mannschaftsadresse, Trainings-Share-Links) MÜSSEN den dreiteiligen Pfad verwenden.
 - **FR-008**: Der bisherige zweiteilige Pfad MUSS keine Daten mehr liefern und DARF keine Weiterleitung auf den neuen Pfad enthalten.
 - **FR-009**: Die Migration MUSS für alle Bestandsmannschaften die neue Adresse erzeugen und bestehende Freigaben, Datenschalter und Namensformate unverändert lassen.

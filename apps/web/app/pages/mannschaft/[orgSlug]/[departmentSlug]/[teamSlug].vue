@@ -18,7 +18,7 @@ import type { VeoCardMatch } from '../../../../components/PlayerboardVeoMatchCar
 import type { VeoSeasonMatch } from '../../../../components/PlayerboardVeoSeason.vue'
 import { scoreLabel } from '../../../../utils/playerboardVeo'
 import type { RankingListItem } from '../../../../utils/playerboardRanking'
-import { PublicTeamRouteParamsSchema } from '../../../../utils/publicTeamPage'
+import { publicTeamPageCacheKey, PublicTeamRouteParamsSchema } from '../../../../utils/publicTeamPage'
 import { deriveSidebarPalette } from '../../../../utils/sidebarBrand'
 
 // Paket 052, PR 4: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum,
@@ -44,7 +44,7 @@ const basePath = routeParams.success
   : ''
 // Der Mannschaftsslug ist nur je Abteilung eindeutig: alle drei Segmente gehoeren in jeden
 // Cache-Schluessel, sonst teilen zwei gleichnamige Mannschaften eine Nutzlast.
-const cacheKey = (name: string) => `public-team-${name}-${orgSlug}-${departmentSlug}-${teamSlug}`
+const cacheKey = (name: string) => publicTeamPageCacheKey(name, orgSlug, departmentSlug, teamSlug)
 
 const {
   data: team,
