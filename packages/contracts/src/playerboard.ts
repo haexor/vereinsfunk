@@ -220,7 +220,7 @@ export const ScopePlayerboardSettingsSchema = z.object({
   // Ersetzbare Felder, die auf dieser Ebene keine Wirkung haben, weil oben verbindlich gesetzt.
   locked: z.object({ seasonStart: z.boolean(), statsVisibility: z.boolean() }),
   canEdit: z.boolean(),
-  // Nur Mannschaft mit generiertem Slug: /mannschaft/{verein}/{abteilung-mannschaft-id}.
+  // Nur Mannschaft mit generiertem Slug: /mannschaft/{verein}/{abteilung}/{mannschaft}.
   publicPath: z.string().nullable(),
 })
 
@@ -297,6 +297,23 @@ export const PlayerboardPhotoConsentSchema = z.object({
 })
 
 // --- Oeffentliche Mannschaftsseite --------------------------------------------------------------
+
+// Adresse /mannschaft/{verein}/{abteilung}/{mannschaft}: ein Segment je Ebene. Verein und Abteilung
+// sind die stabilen Slugs aus organizations/departments, das Mannschaftssegment wird aus dem
+// Mannschaftsnamen erzeugt (playerboard_settings.public_slug, max. 80 Zeichen).
+const PUBLIC_SLUG = /^[a-z0-9]+(?:-[a-z0-9]+)*$/
+export const OrganizationPublicSlugSchema = z.string().max(200).regex(PUBLIC_SLUG)
+export const DepartmentPublicSlugSchema = z.string().max(200).regex(PUBLIC_SLUG)
+export const TeamPublicSlugSchema = z.string().max(80).regex(PUBLIC_SLUG)
+export const PublicTeamAddressSchema = z.object({
+  orgSlug: OrganizationPublicSlugSchema,
+  departmentSlug: DepartmentPublicSlugSchema,
+  teamSlug: TeamPublicSlugSchema,
+})
+
+export function publicTeamPath(address: z.infer<typeof PublicTeamAddressSchema>): string {
+  return `/mannschaft/${address.orgSlug}/${address.departmentSlug}/${address.teamSlug}`
+}
 
 export const PublicPlayerboardTeamSchema = z.object({
   organizationName: z.string(),

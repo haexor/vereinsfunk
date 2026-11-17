@@ -1,4 +1,4 @@
-import { readFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
@@ -65,7 +65,7 @@ describe('PlayerBoard-Seiten', () => {
   })
 
   it('zeigt öffentliche Trainings über die anonymisierte Vertragsgrenze', () => {
-    const page = read('mannschaft/[orgSlug]/[teamSlug].vue')
+    const page = read('mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue')
 
     expect(page).toContain('team.tabs.trainings')
     expect(page).toContain('PublicPlayerboardTrainingSchema')
@@ -101,10 +101,43 @@ describe('PlayerBoard-Seiten', () => {
   })
 
   it('holt auf der oeffentlichen Seite frische Fotolinks, wenn ein Bild nicht mehr laedt', () => {
-    const page = read('mannschaft/[orgSlug]/[teamSlug].vue')
+    const page = read('mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue')
 
     // Die signierten Links leben fuenf Minuten; ein spaet ins Bild gescrolltes Foto blieb kaputt.
     expect(page).toContain('@error="reloadExpiredPhotos"')
     expect(functionBody(page, 'reloadExpiredPhotos')).toContain('if (photosReloading || Date.now() - photosLoadedAt < PHOTO_RELOAD_MIN_AGE_MS) return')
+  })
+
+  it('liegt unter der dreiteiligen Adresse und kennt die zweiteilige nicht mehr', () => {
+    expect(existsSync(join(PAGES_DIR, 'mannschaft/[orgSlug]/[teamSlug].vue'))).toBe(false)
+    const page = read('mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue')
+
+    expect(page).toContain('`/v1/public/playerboard/${orgSlug}/${departmentSlug}/${teamSlug}`')
+    expect(page).toContain('departmentSlug: route.params.departmentSlug')
+  })
+
+  it('validiert die Routenparameter vor der ersten Anfrage und fuehrt alle drei Segmente in jedem Cache-Schluessel', () => {
+    const page = read('mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue')
+
+    expect(page.indexOf('PublicTeamRouteParamsSchema.safeParse')).toBeGreaterThan(-1)
+    expect(page.indexOf('PublicTeamRouteParamsSchema.safeParse')).toBeLessThan(page.indexOf('useAsyncData'))
+    expect(page).toContain('const cacheKey = (name: string) => `public-team-${name}-${orgSlug}-${departmentSlug}-${teamSlug}`')
+    expect(page.match(/cacheKey\('(team|trainings|training|ranking)'\)/g)).toHaveLength(4)
+    expect(page).not.toMatch(/useAsyncData<[^(]*\(\s*`public-team-/)
+  })
+
+  it('kopiert die Adresse und den Trainingslink aus publicPath, ohne Segmente selbst zusammenzusetzen', () => {
+    const settings = read('playerboard/einstellungen.vue')
+    const trainings = read('playerboard/trainings/index.vue')
+
+    expect(settings).toContain('entry.value?.publicPath && import.meta.client ? `${window.location.origin}${entry.value.publicPath}` : \'\'')
+    expect(settings).toContain('<div v-if="publicUrl"')
+    expect(trainings).toContain('new URL(publicTrainingPath.value, window.location.origin)')
+    expect(trainings).toContain('? publicSettings.value.publicPath')
+    for (const source of [settings, trainings]) {
+      expect(source).not.toContain('/mannschaft/')
+      expect(source).not.toContain('publicSlug')
+      expect(source).not.toContain('orgSlug')
+    }
   })
 })

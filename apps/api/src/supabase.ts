@@ -53,6 +53,13 @@ export function parseSupabaseData<T>(schema: z.ZodType<T>, data: unknown): T {
   throw error
 }
 
+// Zwei aktive Mannschaften einer Abteilung mit demselben normalisierten Namen ergaeben dieselbe
+// oeffentliche Adresse; der Unique-Index teams_active_url_slug_unique lehnt das ab (ADR-014).
+// Andere 23505 (z. B. teams_external_unique) sind kein Namenskonflikt und bleiben Fehler.
+export function isTeamNameTakenError(error: { code?: string; message?: string } | null | undefined): boolean {
+  return error?.code === '23505' && (error.message ?? '').includes('teams_active_url_slug_unique')
+}
+
 export function createUserClient(environment: ApiEnvironment, accessToken: string): SupabaseClient {
   if (!environment.SUPABASE_URL || !environment.SUPABASE_ANON_KEY) {
     throw new Error('SUPABASE_URL and SUPABASE_ANON_KEY are required to create a user client')

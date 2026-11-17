@@ -306,7 +306,7 @@ const inputClass = 'focus-ring h-11 rounded-xl border border-[#dfe0d9] bg-white 
           </label>
           <div class="mt-3 grid max-w-md gap-1.5 text-xs font-semibold text-[#5b625d]">
             Adresse der Seite
-            <span class="font-normal text-[#6c756f]">Wird automatisch aus Vereins-, Abteilungs- und Mannschaftsnamen gebildet.</span>
+            <span class="font-normal text-[#6c756f]">Verein und Abteilung stehen fest, das letzte Segment folgt dem Mannschaftsnamen. Nach einer Umbenennung der Mannschaft gilt die neue Adresse, der alte Link zeigt nichts mehr an.</span>
           </div>
           <div v-if="publicUrl" class="mt-3 flex flex-wrap items-center gap-2 rounded-xl bg-[#f6f8f3] p-3">
             <code class="min-w-0 flex-1 break-all text-xs text-ink">{{ publicUrl }}</code>

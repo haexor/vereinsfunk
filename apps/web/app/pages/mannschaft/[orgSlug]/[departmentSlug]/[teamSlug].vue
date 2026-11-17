@@ -14,12 +14,12 @@ import {
   type PublicPlayerboardTrainingSummary,
   type PublicPlayerboardVeoMatch,
 } from '@vereinsfunk/contracts'
-import type { VeoCardMatch } from '../../../components/PlayerboardVeoMatchCard.vue'
-import type { VeoSeasonMatch } from '../../../components/PlayerboardVeoSeason.vue'
-import { scoreLabel } from '../../../utils/playerboardVeo'
-import type { RankingListItem } from '../../../utils/playerboardRanking'
-import { PublicTeamRouteParamsSchema } from '../../../utils/publicTeamPage'
-import { deriveSidebarPalette } from '../../../utils/sidebarBrand'
+import type { VeoCardMatch } from '../../../../components/PlayerboardVeoMatchCard.vue'
+import type { VeoSeasonMatch } from '../../../../components/PlayerboardVeoSeason.vue'
+import { scoreLabel } from '../../../../utils/playerboardVeo'
+import type { RankingListItem } from '../../../../utils/playerboardRanking'
+import { PublicTeamRouteParamsSchema } from '../../../../utils/publicTeamPage'
+import { deriveSidebarPalette } from '../../../../utils/sidebarBrand'
 
 // Paket 052, PR 4: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum,
 // Paket 020). Das Datenbank-Label folgt dem gewählten Mannschaftsformat; Fotos kommen nur nach
@@ -33,19 +33,24 @@ const route = useRoute()
 const api = useApiClient()
 const routeParams = PublicTeamRouteParamsSchema.safeParse({
   orgSlug: route.params.orgSlug,
+  departmentSlug: route.params.departmentSlug,
   teamSlug: route.params.teamSlug,
 })
 const orgSlug = routeParams.success ? routeParams.data.orgSlug : ''
+const departmentSlug = routeParams.success ? routeParams.data.departmentSlug : ''
 const teamSlug = routeParams.success ? routeParams.data.teamSlug : ''
 const basePath = routeParams.success
-  ? `/v1/public/playerboard/${orgSlug}/${teamSlug}`
+  ? `/v1/public/playerboard/${orgSlug}/${departmentSlug}/${teamSlug}`
   : ''
+// Der Mannschaftsslug ist nur je Abteilung eindeutig: alle drei Segmente gehoeren in jeden
+// Cache-Schluessel, sonst teilen zwei gleichnamige Mannschaften eine Nutzlast.
+const cacheKey = (name: string) => `public-team-${name}-${orgSlug}-${departmentSlug}-${teamSlug}`
 
 const {
   data: team,
   error,
   pending,
-} = await useAsyncData<PublicPlayerboardTeam>(`public-team-${orgSlug}-${teamSlug}`, async () => {
+} = await useAsyncData<PublicPlayerboardTeam>(cacheKey('team'), async () => {
   if (!routeParams.success) throw createError({ statusCode: 404, statusMessage: 'Not found' })
   return api.request(basePath, { authenticate: false }, PublicPlayerboardTeamSchema)
 })
@@ -79,7 +84,7 @@ const {
   pending: publicTrainingsPending,
   error: publicTrainingsError,
 } = await useAsyncData<PublicPlayerboardTrainingSummary[]>(
-  `public-team-trainings-${orgSlug}-${teamSlug}`,
+  cacheKey('trainings'),
   async () => {
     if (!team.value?.tabs.trainings) return []
     return api.request(`${basePath}/trainings`, { authenticate: false }, PublicPlayerboardTrainingSummarySchema.array())
@@ -92,7 +97,7 @@ const {
   pending: publicTrainingPending,
   error: publicTrainingError,
 } = await useAsyncData<PublicPlayerboardTraining | null>(
-  `public-team-training-${orgSlug}-${teamSlug}`,
+  cacheKey('training'),
   async () => {
     if (!selectedTrainingId.value || !team.value?.tabs.trainings) return null
     return api.request(`${basePath}/trainings/${selectedTrainingId.value}`, { authenticate: false }, PublicPlayerboardTrainingSchema)
@@ -105,7 +110,7 @@ const {
   pending: rankingPending,
   error: rankingError,
 } = await useAsyncData<RankingListItem[]>(
-  `public-team-ranking-${orgSlug}-${teamSlug}`,
+  cacheKey('ranking'),
   async () => {
     if (!team.value?.tabs.points) return []
     const entries = await api.request(`${basePath}/ranking`, {

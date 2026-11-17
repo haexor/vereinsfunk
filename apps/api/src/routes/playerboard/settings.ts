@@ -1,8 +1,10 @@
 import { hasPermission } from '@vereinsfunk/authorization'
 import {
+  PublicTeamAddressSchema,
   ScopePlayerboardSettingsSchema,
   UpdatePlayerboardSettingsRequestSchema,
   UuidSchema,
+  publicTeamPath,
   type ScopeLevel,
 } from '@vereinsfunk/contracts'
 import type { FastifyInstance } from 'fastify'
@@ -29,6 +31,7 @@ function buildEntry(
   departmentId: string | null,
   canEdit: boolean,
   organizationSlug: string,
+  departmentSlug: string | null,
 ) {
   const teamId = scope === 'team' ? scopeId : null
   const own = ownScopeLevelValue(settings, scope, scopeId)
@@ -54,8 +57,15 @@ function buildEntry(
     },
     locked: resolved.locked,
     canEdit,
-    publicPath: scope === 'team' && own?.public_slug ? `/mannschaft/${organizationSlug}/${own.public_slug}` : null,
+    publicPath: publicPathOf(scope, organizationSlug, departmentSlug, own?.public_slug ?? null),
   })
+}
+
+/** Dreiteilige oeffentliche Adresse einer Mannschaft; null ohne Mannschaftsslug oder bei Segmenten, die die Seite ablehnen wuerde. */
+function publicPathOf(scope: ScopeLevel, orgSlug: string, departmentSlug: string | null, teamSlug: string | null): string | null {
+  if (scope !== 'team' || !teamSlug) return null
+  const address = PublicTeamAddressSchema.safeParse({ orgSlug, departmentSlug, teamSlug })
+  return address.success ? publicTeamPath(address.data) : null
 }
 
 const patchColumns: Readonly<Record<string, string>> = {
@@ -94,7 +104,7 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
     ])
     if (!overview) return reply.code(404).send({ error: 'not_found', correlationId: request.id })
     return reply.code(200).send(overview.levels.map((level) =>
-      buildEntry(settings, level.scope, level.scopeId, level.name, level.departmentId, hasPermission(level.roles, 'playerboard.manage'), overview.organization.slug)))
+      buildEntry(settings, level.scope, level.scopeId, level.name, level.departmentId, hasPermission(level.roles, 'playerboard.manage'), overview.organization.slug, level.departmentSlug)))
   })
 
   app.put('/v1/playerboard/settings', async (request, reply) => {
@@ -141,12 +151,19 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
       metadata: { scope: input.scope, scopeId: input.scopeId, patch: input.patch },
     })
 
-    const [organization, name, settings] = await Promise.all([
+    const [organization, department, name, settings] = await Promise.all([
       service.from('organizations').select('slug').eq('id', scope.organizationId).single(),
+      scope.departmentId
+        ? service.from('departments').select('slug').eq('organization_id', scope.organizationId).eq('id', scope.departmentId).single()
+        : Promise.resolve({ data: null, error: null }),
       loadScopeName(service, input.scope, scope),
       loadOrganizationPlayerboardSettings(service, scope.organizationId),
     ])
     if (organization.error) throw organization.error
-    return reply.code(200).send(buildEntry(settings, input.scope, input.scopeId, name, scope.departmentId ?? null, true, organization.data.slug as string))
+    if (department.error) throw department.error
+    return reply.code(200).send(buildEntry(
+      settings, input.scope, input.scopeId, name, scope.departmentId ?? null, true,
+      organization.data.slug as string, (department.data?.slug as string | undefined) ?? null,
+    ))
   })
 }

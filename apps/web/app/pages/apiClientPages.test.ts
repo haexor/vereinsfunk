@@ -7,7 +7,7 @@ const PAGES_DIR = join(import.meta.dirname, '.')
 // Gleiche Bauart wie apiClientMigration.test.ts, fuer die Vereins-, Betreiber- und oeffentlichen
 // Seiten: Header, Basis-URL, Fehlercodes und Antwortpruefung laufen nur noch ueber useApiClient().
 const PAGES = [
-  'mannschaft/[orgSlug]/[teamSlug].vue',
+  'mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue',
   'marke.vue',
   'mitglieder.vue',
   'onboarding/index.vue',
@@ -40,7 +40,7 @@ describe('API-Client auf den Vereins- und Betreiberseiten', () => {
   }
 
   it('ruft die oeffentliche Mannschaftsseite ohne Anmeldung ab', () => {
-    const source = readFileSync(join(PAGES_DIR, 'mannschaft/[orgSlug]/[teamSlug].vue'), 'utf8')
+    const source = readFileSync(join(PAGES_DIR, 'mannschaft/[orgSlug]/[departmentSlug]/[teamSlug].vue'), 'utf8')
 
     expect(source.match(/api\.request\(/g)?.length).toBe(source.match(/authenticate: false/g)?.length)
   })

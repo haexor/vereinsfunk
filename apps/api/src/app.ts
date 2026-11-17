@@ -157,6 +157,10 @@ export async function buildApp(options: BuildAppOptions = {}): Promise<FastifyIn
     // uuid-Spalten (audit_events.correlation_id, workflow_outbox, ...). Mit requestIdHeader haette
     // ein beliebiger Header-String jeden Audit-Insert still scheitern lassen.
     requestIdHeader: false,
+    // Die oeffentliche Mannschaftsadresse erlaubt Verein- und Abteilungs-Slugs bis 200 Zeichen
+    // (PublicTeamAddressSchema); Fastifys Standard von 100 wuerde laengere Segmente schon im
+    // Router ablehnen, bevor die Route sie validiert.
+    routerOptions: { maxParamLength: 256 },
     // 0 laesst X-Forwarded-For unbeachtet (lokal, Tests); Produktion hinter Traefik setzt 1.
     trustProxy: environment.TRUST_PROXY_HOPS,
     genReqId: (request) => {

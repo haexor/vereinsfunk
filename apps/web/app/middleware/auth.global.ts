@@ -1,4 +1,4 @@
-import { isPublicTeamPagePath } from '../utils/publicTeamPage'
+import { isLegacyPublicTeamPagePath, isPublicTeamPagePath } from '../utils/publicTeamPage'
 
 // /einladung ist bewusst oeffentlich: die Seite selbst entscheidet je nach Session, ob sie
 // sofort annimmt oder zu /registrieren bzw. /anmelden weiterleitet (siehe pages/einladung.vue).
@@ -17,9 +17,13 @@ const publicPaths = new Set(['/anmelden', '/registrieren', '/passwort-neu', '/au
 // oeffentliche Impressum eines einzelnen Vereins, verlinkt aus dessen Instagram-/Facebook-Bio --
 // ebenfalls ohne Vereinskonto als Zielgruppe.
 const publicPathPrefixes = ['/einwilligung/', '/impressum/']
-// Paket 052, PR 4: die oeffentliche Mannschaftsseite -- exaktes Muster, siehe utils/publicTeamPage.ts.
+// Paket 052, PR 4: die oeffentliche Mannschaftsseite /mannschaft/{verein}/{abteilung}/{mannschaft} --
+// exaktes Muster, siehe utils/publicTeamPage.ts.
 
 export default defineNuxtRouteMiddleware(async (to) => {
+  // Die fruehere zweiteilige Mannschaftsadresse liefert nichts mehr und leitet nicht um: fuer alle
+  // Besucher 404, nie die Anmeldung (die sonst nach dem Login ebenfalls ins Leere liefe).
+  if (isLegacyPublicTeamPagePath(to.path)) throw createError({ statusCode: 404, statusMessage: 'Not found' })
   if (publicPaths.has(to.path) || publicPathPrefixes.some((prefix) => to.path.startsWith(prefix)) || isPublicTeamPagePath(to.path)) return
 
   // Die eigentliche Sitzung existiert nur clientseitig (supabase.client.ts). Serverseitig

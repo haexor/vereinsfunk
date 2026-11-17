@@ -1,6 +1,6 @@
 # ADR-013: Öffentliche PlayerBoard-Namensanzeige und Mannschafts-URLs
 
-Status: angenommen · Betreiberentscheidung 17. November 2026
+Status: angenommen · Betreiberentscheidung 17. November 2026 · Die Entscheidung zur Mannschafts-URL ist durch [ADR-014](ADR-014-hierarchical-public-playerboard-url.md) ersetzt; die Namensformate gelten unverändert.
 
 ## Kontext
 

@@ -42,13 +42,15 @@ export interface OrganizationLevel {
   scopeId: string
   name: string
   departmentId: string | null
+  /** Slug der Abteilung der Ebene (fuer die oeffentliche Mannschaftsadresse); null auf Vereinsebene. */
+  departmentSlug: string | null
   teamId: string | null
   /** Rollen des Anfragenden auf genau dieser Ebene (samt uebergeordneter Ebenen). */
   roles: readonly Role[]
 }
 
 const OrganizationRowSchema = z.object({ name: z.string(), slug: z.string() })
-const DepartmentRowsSchema = z.array(z.object({ id: UuidSchema, name: z.string() }))
+const DepartmentRowsSchema = z.array(z.object({ id: UuidSchema, name: z.string(), slug: z.string() }))
 const TeamRowsSchema = z.array(z.object({ id: UuidSchema, name: z.string(), department_id: UuidSchema }))
 
 /**
@@ -67,7 +69,7 @@ export async function loadOrganizationLevels(
 ): Promise<{ organization: z.infer<typeof OrganizationRowSchema>; levels: OrganizationLevel[] } | null> {
   const [organization, departments, teams] = await Promise.all([
     service.from('organizations').select('name, slug').eq('id', organizationId).maybeSingle(),
-    service.from('departments').select('id, name').eq('organization_id', organizationId).order('name'),
+    service.from('departments').select('id, name, slug').eq('organization_id', organizationId).order('name'),
     service.from('teams').select('id, name, department_id').eq('organization_id', organizationId).order('name'),
   ])
   if (organization.error) throw organization.error
@@ -75,12 +77,14 @@ export async function loadOrganizationLevels(
   if (teams.error) throw teams.error
   if (!organization.data) return null
   const organizationRow = parseSupabaseData(OrganizationRowSchema, organization.data)
+  const departmentRows = parseSupabaseData(DepartmentRowsSchema, departments.data)
+  const departmentSlugById = new Map(departmentRows.map((department) => [department.id, department.slug]))
   const levels: Omit<OrganizationLevel, 'roles'>[] = [
-    { scope: 'organization', scopeId: organizationId, name: organizationRow.name, departmentId: null, teamId: null },
-    ...parseSupabaseData(DepartmentRowsSchema, departments.data).map((department) => (
-      { scope: 'department' as const, scopeId: department.id, name: department.name, departmentId: department.id, teamId: null })),
+    { scope: 'organization', scopeId: organizationId, name: organizationRow.name, departmentId: null, departmentSlug: null, teamId: null },
+    ...departmentRows.map((department) => (
+      { scope: 'department' as const, scopeId: department.id, name: department.name, departmentId: department.id, departmentSlug: department.slug, teamId: null })),
     ...parseSupabaseData(TeamRowsSchema, teams.data).map((team) => (
-      { scope: 'team' as const, scopeId: team.id, name: team.name, departmentId: team.department_id, teamId: team.id })),
+      { scope: 'team' as const, scopeId: team.id, name: team.name, departmentId: team.department_id, departmentSlug: departmentSlugById.get(team.department_id) ?? null, teamId: team.id })),
   ]
   const scopeOf = (level: Omit<OrganizationLevel, 'roles'>) => toPermissionScope(organizationId, level.departmentId, level.teamId)
   const rolesByScopeKey = await resolveRolesForScopes(roleProvider, auth, levels.map(scopeOf))

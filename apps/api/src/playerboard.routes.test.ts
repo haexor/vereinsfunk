@@ -16,6 +16,8 @@ const PLAYER_ID = '52000000-3000-4000-8000-000000000001'
 const PERSON_ID = '52000000-2000-4000-8000-000000000001'
 const PHOTO_ID = '52000000-7000-4000-8000-000000000001'
 const CATEGORY_ID = '52000000-4000-4000-8000-000000000001'
+/** Interne IDs, die die Info-Funktion nur an die API liefert. */
+const PUBLIC_IDS = { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, team_id: TEAM_ID }
 
 /** Erstellt einen Rollen-Provider, der fuer jeden abgefragten Scope dieselben Testrollen liefert. */
 function rolesProvider(roles: Role[]): RoleProvider {
@@ -28,6 +30,8 @@ interface FakeOptions {
   userTables?: Record<string, unknown>
   serviceTables?: Record<string, unknown>
   audit?: Record<string, unknown>[]
+  /** Sammelt Name und Argumente jedes RPC-Aufrufs des Service-Clients. */
+  rpcCalls?: { name: string; args: unknown }[]
 }
 
 /**
@@ -51,13 +55,14 @@ function clients(options: FakeOptions = {}): SupabaseClientFactory {
     if (!(name in tables)) throw new Error(`unexpected ${label} table in test fake: ${name}`)
     return chain({ data: tables[name], error: null })
   }
-  const rpc = (calls: Record<string, { data: unknown; error: unknown }>, label: string) => async (name: string) => {
+  const rpc = (calls: Record<string, { data: unknown; error: unknown }>, label: string, log?: { name: string; args: unknown }[]) => async (name: string, args?: unknown) => {
+    log?.push({ name, args })
     if (!(name in calls)) throw new Error(`unexpected ${label} rpc in test fake: ${name}`)
     return calls[name]
   }
   return {
     forUser: () => ({ from: table(options.userTables ?? {}, 'user'), rpc: rpc(options.userRpc ?? {}, 'user') }) as unknown as SupabaseClient,
-    forService: () => ({ from: table(baseService, 'service'), rpc: rpc(options.serviceRpc ?? {}, 'service') }) as unknown as SupabaseClient,
+    forService: () => ({ from: table(baseService, 'service'), rpc: rpc(options.serviceRpc ?? {}, 'service', options.rpcCalls) }) as unknown as SupabaseClient,
   }
 }
 
@@ -393,13 +398,13 @@ describe('PlayerBoard coach flows', () => {
     const teamSettings = {
       scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [],
       team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null,
-      public_player_name_format: 'initials', public_slug: 'sv-beispiel-fussball-u13-52000000-8000-4000-8000-000000000001',
+      public_player_name_format: 'initials', public_slug: 'u13',
     }
 
     /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
     function racingClients(insertError: { code: string; message: string }, updates: unknown[]) {
       const lookups: unknown[] = [null, { id: SETTINGS_ID }]
-      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' }, teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, name: 'U13' } } })
+      const fakes = clients({ serviceTables: { organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' }, departments: { slug: 'fussball' }, teams: { organization_id: ORGANIZATION_ID, department_id: DEPARTMENT_ID, name: 'U13' } } })
       const service = fakes.forService() as unknown as { from: (name: string) => unknown; rpc: unknown }
       fakes.forService = () => ({
         rpc: service.rpc,
@@ -431,9 +436,9 @@ describe('PlayerBoard coach flows', () => {
       expect(updates).toEqual([expect.objectContaining({ public_player_name_format: 'full_name' })])
     })
 
-    it('retries a generated slug conflict and writes the team name format', async () => {
+    it('retries a unique conflict and writes the team name format', async () => {
       const updates: unknown[] = []
-      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_organization_id_public_slug_key"' }, updates)
+      const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_team_unique"' }, updates)
       const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
       const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicPlayerNameFormat: 'first_name_last_initial' } })
       expect(response.statusCode).toBe(200)
@@ -492,11 +497,11 @@ describe('PlayerBoard coach flows', () => {
         userTables: { organization_memberships: [], department_memberships: [], team_memberships: [{ id: 'membership' }] },
         serviceTables: {
           organizations: { name: 'SV Beispiel', slug: 'sv-beispiel' },
-          departments: [{ id: DEPARTMENT_ID, name: 'Fussball' }],
+          departments: [{ id: DEPARTMENT_ID, name: 'Fussball', slug: 'fussball' }],
           teams: [{ id: TEAM_ID, name: 'U13', department_id: DEPARTMENT_ID }],
           playerboard_settings: [
             { scope: 'organization', department_id: null, team_id: null, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty },
-            { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty, public_slug: `fussball-u13-${TEAM_ID}` },
+            { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty, public_slug: 'u13' },
           ],
         },
       }),
@@ -504,7 +509,7 @@ describe('PlayerBoard coach flows', () => {
     const response = await call(app, 'GET', `/v1/organizations/${ORGANIZATION_ID}/playerboard/settings`)
     expect(response.statusCode).toBe(200)
     const entries = response.json() as { scope: string; publicPath: string | null; canEdit: boolean }[]
-    expect(entries.map((entry) => [entry.scope, entry.publicPath])).toEqual([['organization', null], ['department', null], ['team', `/mannschaft/sv-beispiel/fussball-u13-${TEAM_ID}`]])
+    expect(entries.map((entry) => [entry.scope, entry.publicPath])).toEqual([['organization', null], ['department', null], ['team', '/mannschaft/sv-beispiel/fussball/u13']])
   })
 })
 
@@ -528,7 +533,7 @@ describe('PlayerBoard public team page', () => {
 
   it('answers 404 for an unknown or closed team page, without authentication', async () => {
     const app = await startApp({ supabaseClients: publicClients([]) })
-    const response = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    const response = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13' })
     expect(response.statusCode).toBe(404)
   })
 
@@ -539,35 +544,35 @@ describe('PlayerBoard public team page', () => {
   })
 
   it('serves the ranking with labels only and hides switched-off tabs', async () => {
-    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: true, trainings_enabled: false, veo_stats_enabled: false, photos_enabled: false }]
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: true, trainings_enabled: false, veo_stats_enabled: false, photos_enabled: false, ...PUBLIC_IDS }]
     const app = await startApp({ supabaseClients: publicClients(info, {
       playerboard_public_ranking: { data: [{ rank: '1', label: '#7 M. K.', total: '5', category_totals: [{ category: 'Fairness', points: 5 }] }], error: null },
     }) })
-    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13' })
     expect(team.json()).toMatchObject({ organizationName: 'SV Nordstadt', teamName: 'U13', tabs: { points: true, trainings: false, veoStats: false, photos: false }, brand: { primaryColor: '#0b3d91', accentColor: '#ffcc00' } })
     // Saisonbeginn des Vereins (1. August) als Anfang der laufenden Saison.
     expect(team.json().seasonFrom).toMatch(/^\d{4}-08-01$/)
-    const ranking = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/ranking' })
+    const ranking = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/ranking' })
     expect(ranking.json()).toEqual([{ rank: 1, label: '#7 M. K.', total: 5, categories: [{ category: 'Fairness', points: 5 }] }])
-    const photos = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/photos' })
+    const photos = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/photos' })
     expect(photos.statusCode).toBe(404)
-    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
+    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/veo' })
     expect(veo.statusCode).toBe(404)
-    const trainings = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/trainings' })
+    const trainings = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/trainings' })
     expect(trainings.statusCode).toBe(404)
   })
 
   it('serves Veo matches with labels and the club timezone when the tab is on', async () => {
-    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: false, veo_stats_enabled: true, photos_enabled: false }]
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: false, veo_stats_enabled: true, photos_enabled: false, ...PUBLIC_IDS }]
     const match = {
       kickoffAt: '2026-09-05T10:00:00+00:00', opponentName: 'Gegner', isHome: false, ownScore: 1, opponentScore: 3,
       teamStats: [{ teamAssociation: 'own', statType: 'football_shots_total', category: 'attacking', value: 9 }],
       players: [{ jerseyNumber: 7, label: '#7 M. K.', stats: [{ statType: 'sprints_total', category: 'physical', value: 4 }] }],
     }
     const app = await startApp({ supabaseClients: publicClients(info, { playerboard_public_veo_stats: { data: [match], error: null } }) })
-    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13' })
     expect(team.json()).toMatchObject({ tabs: { points: false, trainings: false, veoStats: true, photos: false }, timezone: 'Europe/Berlin' })
-    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/veo' })
+    const veo = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/veo' })
     expect(veo.statusCode).toBe(200)
     expect(veo.json()).toEqual([match])
     expect(JSON.stringify(veo.json())).not.toMatch(/playerId|directoryPersonId|matchedManually|firstName|lastName|email/)
@@ -575,7 +580,7 @@ describe('PlayerBoard public team page', () => {
 
   it('serves saved trainings with anonymous labels and no person fields', async () => {
     const trainingId = '52000000-5000-4000-8000-000000000001'
-    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: true, veo_stats_enabled: false, photos_enabled: false }]
+    const info = [{ organization_name: 'SV Nordstadt', team_name: 'U13', points_enabled: false, trainings_enabled: true, veo_stats_enabled: false, photos_enabled: false, ...PUBLIC_IDS }]
     const detail = {
       trainingDate: '2026-10-22',
       entries: [{ label: '#7 M. K.', category: 'Fairness', value: 5 }],
@@ -584,11 +589,11 @@ describe('PlayerBoard public team page', () => {
       playerboard_public_trainings: { data: [{ training_id: trainingId, training_date: '2026-10-22' }], error: null },
       playerboard_public_training: { data: detail, error: null },
     }) })
-    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13' })
+    const team = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13' })
     expect(team.json()).toMatchObject({ tabs: { points: false, trainings: true, veoStats: false, photos: false } })
-    const list = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/u13/trainings' })
+    const list = await app.inject({ method: 'GET', url: '/v1/public/playerboard/sv-nordstadt/fussball/u13/trainings' })
     expect(list.json()).toEqual([{ id: trainingId, trainingDate: '2026-10-22' }])
-    const selected = await app.inject({ method: 'GET', url: `/v1/public/playerboard/sv-nordstadt/u13/trainings/${trainingId}` })
+    const selected = await app.inject({ method: 'GET', url: `/v1/public/playerboard/sv-nordstadt/fussball/u13/trainings/${trainingId}` })
     expect(selected.json()).toEqual(detail)
     expect(JSON.stringify(selected.json())).not.toMatch(/playerId|directoryPersonId|profileId|email|firstName|lastName|name/)
     expect(JSON.stringify(selected.json())).toContain('#7 M. K.')
