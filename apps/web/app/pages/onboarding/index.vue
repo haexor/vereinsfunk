@@ -3,6 +3,7 @@ import { AlertTriangle, ArrowRight, Check, ShieldCheck, Sparkles, Upload } from 
 import { CreateBrandAssetResponseSchema, CreateOrganizationResponseSchema } from '@vereinsfunk/contracts'
 import { ApiRequestError } from '../../utils/apiClient'
 import { optionalNumber } from '../../utils/numberInput'
+import { suggestPublicSlug } from '../../utils/playerboardSettings'
 
 definePageMeta({ layout: false })
 
@@ -33,8 +34,7 @@ const legalForms: { id: string; label: string }[] = [
   { id: 'nicht_eingetragen', label: 'nicht eingetragener Verein' },
   { id: 'sonstige', label: 'Sonstige' },
 ]
-const slugPreview = computed(() => trim(org.value.name).toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, '') || 'verein')
-function trim(value: string) { return value.trim() }
+const slugPreview = computed(() => suggestPublicSlug(org.value.name) || 'verein')
 const legalFormModel = computed({
   get: () => org.value.legalForm || '__none__',
   set: (value: string) => { org.value.legalForm = value === '__none__' ? '' : value },

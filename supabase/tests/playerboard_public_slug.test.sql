@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(22);
+select plan(25);
 
 set local role postgres;
 
@@ -76,8 +76,11 @@ select pass('un-archiving succeeds once the name no longer clashes');
 update public.teams set name = '!!!' where id = '52700000-1200-4000-8000-000000000003';
 select is(authz.team_url_slug('!!!'), 'mannschaft', 'a symbol-only name falls back to mannschaft');
 select is(authz.team_url_slug(''), 'mannschaft', 'an empty name falls back to mannschaft');
-select is(authz.team_url_slug('Mädchen Ü15 Straße'), 'madchen-u15-strasse',
-  'umlauts and sharp s map like the shared slug part function');
+select is(authz.team_url_slug('Mädchen Ü15 Straße'), 'maedchen-ue15-strasse',
+  'umlauts and sharp s are transliterated like in the shared slug function');
+select is(authz.url_slug('Fußball'), 'fussball', 'the sharp s becomes ss, not a separator');
+select is(authz.url_slug('Müller & Söhne'), 'mueller-soehne', 'umlauts are transliterated, other symbols become one separator');
+select is(authz.url_slug('Café Île'), 'cafe-ile', 'remaining diacritics are dropped, not turned into separators');
 select is(authz.team_url_slug(repeat('a', 79) || ' b'), repeat('a', 79),
   'the slug is cut to 80 characters without a trailing hyphen');
 select is(char_length(authz.team_url_slug(repeat('a', 120))), 80, 'the slug never exceeds 80 characters');
