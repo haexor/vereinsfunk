@@ -8,13 +8,18 @@ import {
 // Die oeffentliche Mannschaftsseite /mannschaft/{verein}/{abteilung}/{mannschaft} ist ohne
 // Anmeldung erreichbar (ADR-014). Bewusst ein exaktes Muster statt eines Praefixes: genau drei
 // nicht leere Segmente im Slug-Format mit den Laengengrenzen der API (Verein und Abteilung 200,
-// Mannschaft 80), keine weiteren Segmente, kein abschliessender Schraegstrich -- jede andere Route
-// unter /mannschaft bleibt hinter der Anmeldung.
+// Mannschaft 80), keine weiteren Segmente, kein abschliessender Schraegstrich. Nur die fruehere
+// gueltige zweiteilige Adresse wird separat oeffentlich als 404 beantwortet.
 const MAX_PATH_LENGTH = 512
 const SEGMENT_SCHEMAS = [OrganizationPublicSlugSchema, DepartmentPublicSlugSchema, TeamPublicSlugSchema] as const
 
 /** Validiert die Slugs der oeffentlichen Mannschaftsseite vor jedem API-Aufruf. */
 export const PublicTeamRouteParamsSchema = PublicTeamAddressSchema.strict()
+
+/** Erzeugt einen eindeutigen Async-Data-Schluessel aus Bereich und vollstaendiger Adresse. */
+export function publicTeamPageCacheKey(name: string, orgSlug: string, departmentSlug: string, teamSlug: string): string {
+  return JSON.stringify(['public-team', name, orgSlug, departmentSlug, teamSlug])
+}
 
 /** Segmente nach /mannschaft; null, wenn der Pfad nicht unter /mannschaft liegt oder zu lang ist. */
 function segmentsBelowTeamRoot(path: string): string[] | null {

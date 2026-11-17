@@ -43,4 +43,4 @@ The migration's preflight (step 1 in `data-model.md`: normalized team-name colli
 
 ## Rollback
 
-Ship a follow-up migration that restores the two-argument functions, the settings unique constraint, the department refresh trigger and the old generator from `2026111701`, then re-run the slug rewrite. Previously shared three-segment links stop working again, as after any address change.
+Ship a follow-up migration that first restores the old generator and department refresh trigger from `2026111701`, then re-runs the slug rewrite, and only after that restores the settings unique constraint on `(organization_id, public_slug)`. Restore the two-argument functions as part of the same migration. Rewriting first gives every team its old department-and-ID-based slug, so equal team names in different departments do not block the old constraint. Previously shared three-segment links stop working again, as after any address change.

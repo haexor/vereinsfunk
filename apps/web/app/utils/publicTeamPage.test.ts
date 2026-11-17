@@ -1,5 +1,20 @@
 import { describe, expect, it } from 'vitest'
-import { isLegacyPublicTeamPagePath, isPublicTeamPagePath, PublicTeamRouteParamsSchema } from './publicTeamPage'
+import {
+  isLegacyPublicTeamPagePath,
+  isPublicTeamPagePath,
+  publicTeamPageCacheKey,
+  PublicTeamRouteParamsSchema,
+} from './publicTeamPage'
+
+describe('publicTeamPageCacheKey', () => {
+  it('keeps department and team slug boundaries unambiguous', () => {
+    const first = publicTeamPageCacheKey('team', 'sv-nordstadt', 'jugend-a', 'u13')
+    const second = publicTeamPageCacheKey('team', 'sv-nordstadt', 'jugend', 'a-u13')
+
+    expect(first).not.toBe(second)
+    expect(publicTeamPageCacheKey('team', 'sv-nordstadt', 'jugend-a', 'u13')).toBe(first)
+  })
+})
 
 describe('isPublicTeamPagePath', () => {
   it('lets exactly /mannschaft/{verein}/{abteilung}/{mannschaft} through', () => {
