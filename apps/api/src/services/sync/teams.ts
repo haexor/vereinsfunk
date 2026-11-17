@@ -2,7 +2,7 @@ import { createTeamMatchStrategy, ExternalTeamSchema, teamDomainAdapter, type Ex
 import { planSync } from '@vereinsfunk/integrations'
 import type { FastifyReply } from 'fastify'
 import { addUniquePendingConflict, buildPendingConflicts, conflictFingerprint, finishSyncRun, handleAbortedSync, loadIgnoredFingerprints, normalizeStructureName, parseIncomingRows, type SyncDomainContext } from '../integrationSync.js'
-import { fetchAllRows } from '../../supabase.js'
+import { fetchAllRows, isTeamNameTakenError } from '../../supabase.js'
 
 export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyReply> {
   const { request, reply, service, organizationId, sourceDepartmentId, sourceId, sourceFieldMapping, sourceLossThresholdPercent, mode, domain, runId, idempotencyKey, rawRows } = ctx
@@ -76,19 +76,24 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
     applicableCreated.push(entity)
   }
 
-  const appliedUpdatedCount = plan.updated.length
+  // Zwei aktive Mannschaften einer Abteilung duerfen nicht denselben URL-Namen tragen
+  // (teams_active_url_slug_unique, ADR-014). Eine Kollision bricht den Lauf nicht ab, sondern
+  // wird fuer genau diese Zeile ein invalid_record-Konflikt auf dem Namen; die uebrigen Zeilen
+  // werden geschrieben.
+  const nameCollision = (name: string, externalId: string | null | undefined) => addUniquePendingConflict(pendingConflicts, {
+    kind: 'invalid_record', label: name, field: 'name', externalId: externalId ?? null, localId: null,
+    currentValue: null, incomingValue: 'Name kollidiert mit einer bestehenden Mannschaft',
+    fingerprint: conflictFingerprint([sourceId, domain, 'invalid_record', 'name', externalId ?? name]),
+  })
+
+  let createdCount = applicableCreated.length
+  let updatedCount = plan.updated.length
   if (mode === 'apply') {
-    if (applicableCreated.length > 0) {
-      const insertRows = applicableCreated.map((entity) => {
-        const resolved = match.fieldsOf(entity) as { departmentId: string | null }
-        return {
-          organization_id: organizationId, department_id: resolved.departmentId ?? sourceDepartmentId, name: entity.name,
-          age_group: entity.ageGroup ?? null, competition: entity.competition ?? null,
-          source_id: sourceId, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
-        }
-      })
-      const insert = await service.from('teams').insert(insertRows)
-      if (insert.error) throw insert.error
+    // Stilllegen zuerst: ein ersetztes Team gibt seinen Namen im selben Lauf frei, bevor ein neues
+    // oder umbenanntes Team ihn belegt.
+    for (const retired of plan.retired) {
+      const result = await service.from('teams').update({ archived_at: new Date().toISOString() }).eq('id', retired.id).is('archived_at', null)
+      if (result.error) throw result.error
     }
     for (const update of plan.updated) {
       const resolved = match.fieldsOf(update.external) as { departmentId: string | null }
@@ -100,17 +105,40 @@ export async function handleTeamsSync(ctx: SyncDomainContext): Promise<FastifyRe
           source_updated_at: update.external.sourceUpdatedAt ?? update.local.sourceUpdatedAt?.toISOString() ?? null,
         })
         .eq('id', update.local.id)
+      if (isTeamNameTakenError(result.error)) {
+        nameCollision(update.external.name, update.external.externalId)
+        updatedCount -= 1
+        continue
+      }
       if (result.error) throw result.error
     }
-    for (const retired of plan.retired) {
-      const result = await service.from('teams').update({ archived_at: new Date().toISOString() }).eq('id', retired.id).is('archived_at', null)
-      if (result.error) throw result.error
+    if (applicableCreated.length > 0) {
+      const insertRows = applicableCreated.map((entity) => {
+        const resolved = match.fieldsOf(entity) as { departmentId: string | null }
+        return {
+          organization_id: organizationId, department_id: resolved.departmentId ?? sourceDepartmentId, name: entity.name,
+          age_group: entity.ageGroup ?? null, competition: entity.competition ?? null,
+          source_id: sourceId, external_id: entity.externalId ?? null, source_updated_at: entity.sourceUpdatedAt ?? null,
+        }
+      })
+      const insert = await service.from('teams').insert(insertRows)
+      if (isTeamNameTakenError(insert.error)) {
+        // Der Batch ist atomar und hat nichts geschrieben: jede Zeile einzeln, damit nur die
+        // kollidierende scheitert.
+        for (const row of insertRows) {
+          const single = await service.from('teams').insert(row)
+          if (isTeamNameTakenError(single.error)) {
+            nameCollision(row.name, row.external_id)
+            createdCount -= 1
+          } else if (single.error) throw single.error
+        }
+      } else if (insert.error) throw insert.error
     }
   }
 
   return reply.code(200).send(await finishSyncRun({
     service, request, runId, organizationId, sourceId, domain, mode, idempotencyKey,
-    createdCount: applicableCreated.length, updatedCount: appliedUpdatedCount, retiredCount: plan.retired.length,
+    createdCount, updatedCount, retiredCount: plan.retired.length,
     skippedCount: plan.skipped.length, pendingConflicts,
   }))
 }

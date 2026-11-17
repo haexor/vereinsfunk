@@ -300,49 +300,49 @@ set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
 
 -- 45: ohne Slug und Schalter gibt es keine oeffentliche Seite.
-select is((select count(*)::integer from public.playerboard_public_team_info('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 0,
+select is((select count(*)::integer from public.playerboard_public_team_info('pgtap-playerboard', 'fussball', 'u13')), 0,
   'without a public slug there is no public team page');
 
 set local role postgres;
-update public.playerboard_settings set public_slug = 'fussball-u13-52000000-1200-4000-8000-0000000000a1', public_points_enabled = true, public_trainings_enabled = true
+update public.playerboard_settings set public_slug = 'u13', public_points_enabled = true, public_trainings_enabled = true
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 set local role service_role;
 
 -- 46-52: oeffentliche Trainings sind separat schaltbar und liefern nur anonyme Zeilen.
-select is((select trainings_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), true,
+select is((select trainings_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'fussball', 'u13')), true,
   'the public team metadata exposes the independent training switch');
 select results_eq(
-  $$select training_id, training_date from public.playerboard_public_trainings('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')$$,
+  $$select training_id, training_date from public.playerboard_public_trainings('pgtap-playerboard', 'fussball', 'u13')$$,
   $$select '52000000-5000-4000-8000-000000000001'::uuid, current_date - 1$$,
   'the public training list contains saved trainings only'
 );
 select is(
-  (select public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001')->'entries'->0->>'label'),
+  (select public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001')->'entries'->0->>'label'),
   '#7 M. K.', 'the public training detail uses jersey number and initials'
 );
 select ok(
-  position('Mia' in public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001')::text) = 0
-    and position('Keller' in public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001')::text) = 0
-    and position('directoryPersonId' in public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001')::text) = 0
-    and position('52000000-3000-' in public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001')::text) = 0,
+  position('Mia' in public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('Keller' in public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('directoryPersonId' in public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0
+    and position('52000000-3000-' in public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001')::text) = 0,
   'the public training detail contains no names or player identifiers'
 );
 select is(
-  public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000002'),
+  public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000002'),
   null::jsonb, 'draft trainings are never publicly readable'
 );
 select is(
-  public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000003'),
+  public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000003'),
   null::jsonb, 'a training from another team is never publicly readable through this team slug'
 );
 set local role postgres;
 update public.playerboard_settings set public_trainings_enabled = false
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 set local role service_role;
-select is((select count(*)::integer from public.playerboard_public_trainings('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 0,
+select is((select count(*)::integer from public.playerboard_public_trainings('pgtap-playerboard', 'fussball', 'u13')), 0,
   'disabling public trainings removes the public list');
 select is(
-  public.playerboard_public_training('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1', '52000000-5000-4000-8000-000000000001'),
+  public.playerboard_public_training('pgtap-playerboard', 'fussball', 'u13', '52000000-5000-4000-8000-000000000001'),
   null::jsonb, 'disabling public trainings closes existing share links'
 );
 set local role postgres;
@@ -352,20 +352,20 @@ set local role service_role;
 
 -- 53-56: Rangliste nur mit Rueckennummer und Initialen.
 select results_eq(
-  $$select rank, label, total from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')$$,
+  $$select rank, label, total from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13')$$,
   $$values (1::bigint, '#7 M. K.'::text, 5::bigint), (2::bigint, 'J. A.'::text, 3::bigint)$$,
   'the public ranking shows jersey number and initials only'
 );
 select is(
-  (select count(*)::integer from (select to_jsonb(r)::text as payload from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1') r) dump
+  (select count(*)::integer from (select to_jsonb(r)::text as payload from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13') r) dump
     where payload ~ '(Mia|Keller|Jonas|Albers|2013|52000000-)'),
   0, 'the public ranking never contains names, birth years or ids'
 );
 select is(
-  (select category_totals from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1') where rank = 1),
+  (select category_totals from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13') where rank = 1),
   '[{"points": 5, "category": "Fairness"}]'::jsonb, 'public category totals carry names, not ids'
 );
-select is((select photos_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), false,
+select is((select photos_enabled from public.playerboard_public_team_info('pgtap-playerboard', 'fussball', 'u13')), false,
   'public photos stay off until the coach enables them');
 
 -- 57-58: public_sharing_allowed = false oder Modul aus schliesst die Seite.
@@ -373,21 +373,21 @@ set local role postgres;
 update public.playerboard_settings set public_sharing_allowed = false
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'department';
 set local role service_role;
-select is((select count(*)::integer from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 0,
+select is((select count(*)::integer from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13')), 0,
   'public_sharing_allowed false on the department closes the public page');
 set local role postgres;
 update public.playerboard_settings set public_sharing_allowed = null
  where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'department';
 update public.policy_settings set enabled_modules = '{social_media}' where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 set local role service_role;
-select is((select count(*)::integer from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 0,
+select is((select count(*)::integer from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13')), 0,
   'module off closes the public page');
 set local role postgres;
 update public.policy_settings set enabled_modules = null where organization_id = '52000000-1000-4000-8000-000000000001' and scope = 'team';
 
 -- 59-60: weder anon noch angemeldete Nutzer rufen die oeffentlichen Funktionen direkt auf.
 set local role anon;
-select throws_ok($$select * from public.playerboard_public_ranking('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')$$, '42501', null,
+select throws_ok($$select * from public.playerboard_public_ranking('pgtap-playerboard', 'fussball', 'u13')$$, '42501', null,
   'anon cannot execute the public ranking function');
 set local role authenticated;
 select throws_ok($$select public.playerboard_public_label('52000000-2000-4000-8000-000000000001', 7)$$, '42501', null,
@@ -461,7 +461,7 @@ select is((select count(*)::integer from public.playerboard_training_photo_peopl
 -- 64-67: oeffentliche Fotos, Ausnehmen, Widerruf.
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
-select is((select count(*)::integer from public.playerboard_public_photos('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 1,
+select is((select count(*)::integer from public.playerboard_public_photos('pgtap-playerboard', 'fussball', 'u13')), 1,
   'an approved public photo appears on the public page');
 set local role authenticated;
 select set_config('request.jwt.claim.role', 'authenticated', true);
@@ -470,7 +470,7 @@ select is((select public from public.playerboard_set_photo_public('52000000-7000
   'a coach can exclude a single photo');
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
-select is((select count(*)::integer from public.playerboard_public_photos('pgtap-playerboard', 'fussball-u13-52000000-1200-4000-8000-0000000000a1')), 0,
+select is((select count(*)::integer from public.playerboard_public_photos('pgtap-playerboard', 'fussball', 'u13')), 0,
   'an excluded photo disappears from the public page');
 set local role postgres;
 update public.playerboard_training_photos set public = true where id = '52000000-7000-4000-8000-000000000001';

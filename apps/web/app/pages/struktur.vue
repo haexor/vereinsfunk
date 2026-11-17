@@ -145,6 +145,14 @@ async function createDepartment() {
   }
 }
 
+// Der Teamname bildet das letzte Segment der oeffentlichen Adresse und ist je Abteilung unter den
+// aktiven Teams eindeutig (ADR-014); die Normalisierung ignoriert Gross-/Kleinschreibung und Sonderzeichen.
+function teamErrorMessage(error: unknown, fallback: string): string {
+  return error instanceof ApiRequestError && error.code === 'team_name_taken'
+    ? 'In dieser Abteilung gibt es bereits ein aktives Team mit diesem Namen (Groß-/Kleinschreibung und Sonderzeichen zählen nicht). Der Name bildet die öffentliche Adresse und muss eindeutig sein.'
+    : fallback
+}
+
 async function createTeam(departmentId: string) {
   const name = newTeamNameByDepartment[departmentId]?.trim()
   if (!name) return
@@ -154,8 +162,8 @@ async function createTeam(departmentId: string) {
     await api.request(`/v1/departments/${departmentId}/teams`, { method: 'POST', body: { name } })
     newTeamNameByDepartment[departmentId] = ''
     await reload()
-  } catch {
-    actionError.value = 'Das Team konnte nicht angelegt werden.'
+  } catch (error) {
+    actionError.value = teamErrorMessage(error, 'Das Team konnte nicht angelegt werden.')
   } finally {
     creatingTeamFor.value = null
   }
@@ -202,8 +210,8 @@ async function renameTeam(team: TeamRow) {
   try {
     await api.request(`/v1/teams/${team.id}`, { method: 'PATCH', body: { name } })
     await reload()
-  } catch {
-    actionError.value = 'Das Team konnte nicht umbenannt werden.'
+  } catch (error) {
+    actionError.value = teamErrorMessage(error, 'Das Team konnte nicht umbenannt werden.')
   }
 }
 
@@ -211,8 +219,8 @@ async function toggleTeamArchived(team: TeamRow) {
   try {
     await api.request(`/v1/teams/${team.id}`, { method: 'PATCH', body: { archived: !team.archived_at } })
     await reload()
-  } catch {
-    actionError.value = 'Der Archivstatus konnte nicht geändert werden.'
+  } catch (error) {
+    actionError.value = teamErrorMessage(error, 'Der Archivstatus konnte nicht geändert werden.')
   }
 }
 

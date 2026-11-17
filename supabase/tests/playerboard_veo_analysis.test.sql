@@ -169,12 +169,12 @@ select is((select count(*)::int from public.playerboard_veo_events), 1, 'the nei
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
 select ok(
-  position('FootballGoal' in public.playerboard_public_veo_stats('pgtap-veo-analysis', 'c1')::text) = 0
-    and position('heatmap' in public.playerboard_public_veo_stats('pgtap-veo-analysis', 'c1')::text) = 0,
+  position('FootballGoal' in public.playerboard_public_veo_stats('pgtap-veo-analysis', 'fussball', 'c1')::text) = 0
+    and position('heatmap' in public.playerboard_public_veo_stats('pgtap-veo-analysis', 'fussball', 'c1')::text) = 0,
   'the public output carries no analysis data'
 );
 select is(
-  jsonb_array_length(public.playerboard_public_veo_stats('pgtap-veo-analysis', 'c1')), 1,
+  jsonb_array_length(public.playerboard_public_veo_stats('pgtap-veo-analysis', 'fussball', 'c1')), 1,
   'the public output still lists the match itself'
 );
 

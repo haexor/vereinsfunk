@@ -12,6 +12,7 @@ import { z } from 'zod'
 import { mapDepartmentRow, mapTeamRow } from '../apiMappers.js'
 import type { ApiRouteContext } from './context.js'
 import { createAuditRecorder } from './shared.js'
+import { isTeamNameTakenError } from '../supabase.js'
 
 export function registerStructureRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { requireAuth, requirePermission, supabaseClients } = context
@@ -95,6 +96,7 @@ app.post('/v1/departments/:id/teams', async (request, reply) => {
     .single()
   if (insert.error) {
     if (insert.error.message.includes('structure limit reached')) return reply.code(409).send({ error: 'structure_limit_reached', correlationId: request.id })
+    if (isTeamNameTakenError(insert.error)) return reply.code(409).send({ error: 'team_name_taken', correlationId: request.id })
     throw insert.error
   }
   await recordAuditEvent(request, { organizationId: department.data.organization_id, action: 'team.created', entityType: 'teams', entityId: insert.data.id, metadata: { name: input.name, departmentId: params.id } })
@@ -114,7 +116,10 @@ app.patch('/v1/teams/:id', async (request, reply) => {
   if (input.name !== undefined) payload.name = input.name
   if (input.archived !== undefined) payload.archived_at = input.archived ? new Date().toISOString() : null
   const update = await client.from('teams').update(payload).eq('id', params.id).select('id, organization_id, department_id, name, age_group, competition, source_id, archived_at, created_at').single()
-  if (update.error) throw update.error
+  if (update.error) {
+    if (isTeamNameTakenError(update.error)) return reply.code(409).send({ error: 'team_name_taken', correlationId: request.id })
+    throw update.error
+  }
   await recordAuditEvent(request, { organizationId: existing.data.organization_id, action: 'team.updated', entityType: 'teams', entityId: params.id, metadata: payload })
   return reply.code(200).send(TeamSchema.parse(mapTeamRow(update.data)))
 })

@@ -20,7 +20,7 @@ insert into public.playerboard_point_categories (id, organization_id, scope, nam
 insert into public.playerboard_trainings (id, organization_id, department_id, team_id, training_date, status) values
   ('52400000-5000-4000-8000-000000000001', '52400000-1000-4000-8000-000000000001', '52400000-1100-4000-8000-000000000001', '52400000-1200-4000-8000-000000000001', current_date - 1, 'saved');
 insert into public.playerboard_settings (organization_id, scope, department_id, team_id, public_points_enabled, public_slug, updated_by) values
-  ('52400000-1000-4000-8000-000000000001', 'team', '52400000-1100-4000-8000-000000000001', '52400000-1200-4000-8000-000000000001', true, 'fussball-u13-52400000-1200-4000-8000-000000000001', '52400000-0000-4000-8000-000000000001');
+  ('52400000-1000-4000-8000-000000000001', 'team', '52400000-1100-4000-8000-000000000001', '52400000-1200-4000-8000-000000000001', true, 'u13', '52400000-0000-4000-8000-000000000001');
 
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
@@ -52,12 +52,12 @@ select results_eq(
 set local role service_role;
 select set_config('request.jwt.claim.role', 'service_role', true);
 select results_eq(
-  $$select rank, label from public.playerboard_public_ranking('pgtap-pb-rank', 'fussball-u13-52400000-1200-4000-8000-000000000001')$$,
+  $$select rank, label from public.playerboard_public_ranking('pgtap-pb-rank', 'fussball', 'u13')$$,
   $$values (1::bigint, '#10 A. A.'::text), (2::bigint, '#3 C. C.'::text), (2::bigint, '#9 B. B.'::text), (3::bigint, '#4 D. D.'::text)$$,
   'the public ranking uses the same places and orders a tie by jersey number'
 );
 select is(
-  (select max(rank) from public.playerboard_public_ranking('pgtap-pb-rank', 'fussball-u13-52400000-1200-4000-8000-000000000001')), 3::bigint,
+  (select max(rank) from public.playerboard_public_ranking('pgtap-pb-rank', 'fussball', 'u13')), 3::bigint,
   'four players with one tie end on place three, not four'
 );
 

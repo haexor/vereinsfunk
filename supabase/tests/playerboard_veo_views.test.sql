@@ -118,27 +118,27 @@ select results_eq(
 );
 
 -- 9-11: oeffentlich nur mit Schalter und Freigabe, Spieler ohne Namen.
-select is(public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001'), '[]'::jsonb, 'without a public page there is nothing public');
+select is(public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13'), '[]'::jsonb, 'without a public page there is nothing public');
 set local role postgres;
 insert into public.playerboard_settings (organization_id, scope, department_id, team_id, public_veo_stats_enabled, public_slug, updated_by) values
-  ('53300000-1000-4000-8000-000000000001', 'team', '53300000-1100-4000-8000-000000000001', '53300000-1200-4000-8000-000000000001', true, 'fussball-u13-53300000-1200-4000-8000-000000000001', '53300000-0000-4000-8000-000000000001');
+  ('53300000-1000-4000-8000-000000000001', 'team', '53300000-1100-4000-8000-000000000001', '53300000-1200-4000-8000-000000000001', true, 'u13', '53300000-0000-4000-8000-000000000001');
 set local role service_role;
 select results_eq(
   $$select string_agg(player->>'label', ', ' order by (player->>'jerseyNumber')::int)
-      from jsonb_array_elements(public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001', '2026-09-01', '2026-09-06')) match
+      from jsonb_array_elements(public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13', '2026-09-01', '2026-09-06')) match
       cross join jsonb_array_elements(match->'players') player$$,
   $$values ('#5 B. B., #7 A. A.'::text)$$,
   'players appear only with jersey number and initials'
 );
 select ok(
-  position('Arnold' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('fixtureId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('playerId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('directoryPersonId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('matchedManually' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('firstName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('lastName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0
-    and position('email' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball-u13-53300000-1200-4000-8000-000000000001')::text) = 0,
+  position('Arnold' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('fixtureId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('playerId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('directoryPersonId' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('matchedManually' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('firstName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('lastName' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0
+    and position('email' in public.playerboard_public_veo_stats('pgtap-pb-veo-views', 'fussball', 'u13')::text) = 0,
   'the public output contains no names and no ids'
 );
 
