@@ -24,19 +24,21 @@ ADR-013 bildete das Mannschaftssegment aus Abteilungsname, Mannschaftsname und d
 - Alte Links werden nicht weitergeleitet. Die frühere zweiteilige Adresse liefert in Seite und API dieselbe 404-Antwort wie eine unbekannte Mannschaft, für anonyme wie angemeldete Besucher, ohne Daten und ohne Weiterleitung. Ein Mannschaftssegment `trainings`, `ranking`, `veo` oder `photos` bleibt erreichbar, weil die frühere Adresse nur über einen Wildcard-Pfad mit niedrigster Priorität abgefangen wird.
 - Teamanlage, Umbenennung, Wiederherstellung und externer Sync melden einen Namenskonflikt: die API antwortet `409 team_name_taken` (ohne Audit-Ereignis), der Sync macht aus der Zeile einen `invalid_record`-Konflikt auf dem Namen und schreibt die übrigen Zeilen weiter. Der Sync legt dazu stillgelegte Mannschaften zuerst still, damit ein Ersatz im selben Lauf den Namen belegen kann.
 
-## Bekannte Eigenheit
+## Segment-Normalisierung
 
-`create_department()` bildet den Abteilungs-Slug ohne Umlautabbildung (`Fußball` ergibt `fu-ball`), der Mannschaftsgenerator bildet Umlaute und `ß` ab (`Fußball` ergäbe `fussball`). Die Entscheidung nutzt den bestehenden Abteilungs-Slug unverändert; eine Angleichung wäre eine eigene Änderung an stabilen Adressen.
+Vereins-, Abteilungs- und Mannschaftssegmente verwenden dieselbe ASCII-Normalisierung: `ä/ö/ü/ß` werden zu `ae/oe/ue/ss`, andere diakritische Zeichen werden entfernt (`Café` wird `cafe`), und Folgen anderer Zeichen werden zu einem Bindestrich. Leere Vereins- und Abteilungssegmente fallen auf `verein` beziehungsweise `abteilung` zurück; leere Mannschaftssegmente auf `mannschaft`. Bei Namenskollisionen ergänzen die Erzeuger von Vereins- und Abteilungs-Slugs einen Zähler. Aktive Mannschaften mit kollidierenden normalisierten Segmenten werden abgelehnt.
 
 ## Migration und Wiederherstellung
 
 - `2026111702_playerboard_hierarchical_public_url.sql` beginnt mit einer Vorprüfung. Sie bricht mit einer lesbaren Liste ab und ändert nichts, wenn aktive Mannschaften einer Abteilung nach der Normalisierung kollidieren oder wenn Vereins- oder Abteilungs-Slugs mit Mannschaftseinstellungen länger als 200 Zeichen sind oder nicht `^[a-z0-9]+(-[a-z0-9]+)*$` entsprechen. Es wird nichts automatisch umbenannt, weil das stillschweigend Nutzerdaten und öffentliche Links ändern würde. Vor dem Deployment müssen die aufgelisteten Mannschaften umbenannt oder archiviert werden.
 - Danach werden nur bestehende Einstellungszeilen neu erzeugt (`public_slug = public_slug`); es entsteht keine neue Zeile, und Schalter, Freigaben und `public_player_name_format` bleiben unberührt.
+- `2026111703_ascii_organization_and_department_slugs.sql` vereinheitlicht zusätzlich die Normalisierung für alle drei Segmente. Bestehende Vereins- und Abteilungs-Slugs werden repariert, wenn sie noch dem alten automatisch erzeugten Format entsprechen; manuell abweichende Slugs bleiben erhalten. Aktive Teams, deren Namen nach der neuen Normalisierung kollidieren (einschließlich des 80-Zeichen-Limits), brechen die Migration vor Änderungen ab und müssen vorher umbenannt oder archiviert werden.
+- Diese Reparatur ändert bestehende öffentliche URLs, etwa `/mannschaft/tsv-ifa/fu-ball/c1` zu `/mannschaft/tsv-ifa/fussball/c1`. Alte URLs werden nicht weitergeleitet.
 - Die Migration ist nicht abwärtskompatibel zu API-Ständen vor diesem Change: sie löscht die Zwei-Argument-Funktionen, die die alten Routen aufrufen. API und Datenbank werden deshalb gemeinsam ausgerollt.
 - Rückweg: eine Folgemigration, die die alten Funktionen, den Unique-Constraint auf den Einstellungen und den Abteilungs-Trigger wiederherstellt und den alten Generator erneut ausführt. Er steht unverändert in `2026111701`. Sie wird nicht mitgeliefert; alte, schon ersetzte Links funktionieren danach wieder, die neuen nicht mehr.
 
 ## Folgen
 
-- Eine Mannschaftsumbenennung ändert ihre Adresse, und der alte Link zeigt nichts mehr an. Die Einstellungsseite weist darauf hin.
+- Eine Mannschaftsumbenennung ändert ihre Adresse, und der alte Link zeigt nichts mehr an. Die Einstellungsseite weist darauf hin. Die einmalige Slug-Reparatur kann außerdem bestehende Vereins- und Abteilungssegmente und damit öffentliche URLs ändern; für alte Adressen gibt es keine Weiterleitung.
 - Die Namenseindeutigkeit gilt für alle aktiven Mannschaften einer Abteilung, auch ohne PlayerBoard-Einstellungen. Namen, die sich erst nach dem 80. Zeichen unterscheiden, kollidieren.
 - Fastifys `maxParamLength` wird auf 256 gesetzt, damit Slugs bis 200 Zeichen den Router erreichen.
