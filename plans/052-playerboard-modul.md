@@ -2,7 +2,7 @@
 
 ## Ergebnis
 
-Trainerinnen und Trainer erfassen nach dem Training auf dem Handy Punkte je Spieler und je konfigurierbarer Kategorie (z. B. Trainingsleistung, Fairness, Anwesenheit). Spielerinnen und Spieler sehen die Trainings und die Rangliste ihrer Mannschaft. Ein Verein oder eine Abteilung kann Kategorien und die Saison vorgeben, die alle Mannschaften darunter übernehmen müssen, sofern die obere Ebene das Übersteuern nicht ausdrücklich freigibt. Eine Mannschaft kann ihre Punkte und Veo-Werte öffentlich zeigen, mit Spielern nur als Rückennummer und Initialen, auf Wunsch auch die Trainingsfotos, wenn Verein und Abteilung das erlauben.
+Trainerinnen und Trainer erfassen nach dem Training auf dem Handy Punkte je Spieler und je konfigurierbarer Kategorie (z. B. Trainingsleistung, Fairness, Anwesenheit). Spielerinnen und Spieler sehen die Trainings und die Rangliste ihrer Mannschaft. Ein Verein oder eine Abteilung kann Kategorien und die Saison vorgeben, die alle Mannschaften darunter übernehmen müssen, sofern die obere Ebene das Übersteuern nicht ausdrücklich freigibt. Eine Mannschaft kann ihre Punkte und Veo-Werte öffentlich zeigen und je Team einstellen, ob Spieler mit Initialen, Vornamen plus Nachnamensinitiale oder vollständigem Namen erscheinen. Trainingsfotos können ebenfalls freigegeben werden, wenn Verein und Abteilung das erlauben.
 
 Das ist der fachliche Umfang der bisher eigenständigen Anwendung `haexhub/playerboard` (Features 001, 002 teilweise, 006, 015) als Modul `playerboard` innerhalb von Vereinsfunk. Die Veo-Anbindung folgt in Paket 053.
 
@@ -122,9 +122,9 @@ Einwilligung: Für jede aktive Person im Kader ohne gültigen `consent_records`-
 
 ### Öffentliche Mannschaftsseite
 
-**Betreiberentscheidung 2026-10-06:** Punkte und Veo-Werte einer Mannschaft sollen auch ohne Anmeldung sichtbar sein können. Spieler erscheinen dort **nie mit Klarnamen**, sondern nur als Rückennummer und Initialen („#7 M. K.“). Trainingsfotos sind öffentlich, wenn der Trainer das eingestellt hat.
+**Betreiberentscheidung 2026-11-17:** Punkte und Veo-Werte einer Mannschaft sollen auch ohne Anmeldung sichtbar sein können. Die Mannschaft stellt die Namensanzeige ein: Rückennummer und Initialen („#7 M. K.“), Rückennummer und Vorname plus Nachnamensinitiale („#7 Max K.“) oder Rückennummer und vollständiger Name („#7 Max König“). Trainingsfotos sind öffentlich, wenn der Trainer das eingestellt hat.
 
-Der Trainer schaltet drei Teile einzeln (`playerboard.manage` auf der Mannschaft):
+Der Trainer schaltet öffentliche Datenbereiche einzeln und wählt die Namensanzeige (`playerboard.manage` auf der Mannschaft):
 
 | Schalter | zeigt öffentlich |
 |---|---|
@@ -136,8 +136,8 @@ Jeder Schalter wirkt nur, wenn `public_sharing_allowed` entlang des ganzen Pfads
 
 Darstellung von Spielern:
 
-- Initialen werden **in der Datenbank** gebildet (erster Buchstabe von Vor- und Nachname, „M. K.“). Klarnamen, Geburtsjahr, IDs, Positionen und E-Mail verlassen die `security definer`-Funktion nie.
-- Ohne Rückennummer erscheint nur „M. K.“. Bei gleichen Initialen unterscheidet die Rückennummer. Zwei Spieler ohne Nummer mit gleichen Initialen werden bewusst nicht weiter aufgelöst.
+- Die eingestellte Namensform wird **in der Datenbank** gebildet. Geburtsjahr, IDs, Positionen und E-Mail verlassen die `security definer`-Funktion nie.
+- Ohne Rückennummer erscheint nur die eingestellte Namensform. Bei gleichen Initialen unterscheidet die Rückennummer. Zwei Spieler ohne Nummer mit gleichen Initialen werden bewusst nicht weiter aufgelöst.
 - Trainingsnotizen sind nie öffentlich.
 
 Fotos:
@@ -146,7 +146,7 @@ Fotos:
 - Einzelne Fotos kann der Trainer über `playerboard_training_photos.public = false` ausnehmen.
 - Jedes Foto startet privat mit `consent_review_status = 'pending'`; der Upload selbst bleibt möglich. Vor einer öffentlichen Freigabe führt ein Trainer oder eine dazu berechtigte Einwilligungsprüfung einen verbindlichen Einzelbild-Review durch: Er listet jede erkennbare Person über `directory_person_id`, bestätigt ausdrücklich, dass keine weitere erkennbare Person übersehen wurde, und ordnet jeder gelisteten Person eine zum Prüfzeitpunkt gültige Einwilligung für Zweck `website` und Kontext `training` zu. Unbekannte, nicht gelistete oder nicht gültig eingewilligte erkennbare Personen blockieren die Freigabe. Erst eine transaktionale Prüfung aller Zuordnungen setzt `consent_review_status = 'approved'` und darf `public = true` setzen; der anonyme Endpunkt und die signierte URL-Ausgabe liefern ausschließlich Fotos mit diesem Status. Widerruf, Ablauf oder Ablösung einer Einwilligung setzt betroffene Fotos wieder auf `blocked` und macht sie privat. Die bloße Anzeige betroffener Spieler ohne diese Bestätigung reicht nicht aus.
 
-URL `/mannschaft/{vereins-slug}/{public_slug}` mit Reitern Rangliste, Veo und Fotos (nur die eingeschalteten). Ausgeliefert über anonyme API-Endpunkte mit Service-Rolle und `security definer`-Funktionen, die nur `service_role` ausführen darf (Muster öffentliches Impressum, Paket 020).
+URL `/mannschaft/{vereins-slug}/{abteilungsname-mannschaftsname-team-id}` mit Reitern Rangliste, Veo und Fotos (nur die eingeschalteten). Der Pfad wird aus den Namen gebildet und durch die Team-ID innerhalb des Vereins eindeutig; er ist nicht manuell bearbeitbar. Ausgeliefert über anonyme API-Endpunkte mit Service-Rolle und `security definer`-Funktionen, die nur `service_role` ausführen darf (Muster öffentliches Impressum, Paket 020).
 
 ## Datenmodell
 
@@ -173,7 +173,9 @@ create table public.playerboard_settings (
   public_points_enabled boolean,
   public_veo_stats_enabled boolean,
   public_photos_enabled boolean,
-  public_slug text check (public_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'),
+  public_slug text check (public_slug ~ '^[a-z0-9]+(?:-[a-z0-9]+)*$'), -- generiert aus Abteilung, Mannschaft und Team-ID
+  public_player_name_format text not null default 'initials'
+    check (public_player_name_format in ('initials', 'first_name_last_initial', 'full_name')),
   updated_by uuid not null references public.profiles(id),
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now(),
@@ -304,7 +306,7 @@ Migration wie oben (setzt 054 voraus), Bucket mit Policies, Trigger. pgTAP mit p
 - `stats_visibility`: Spieler einer Nachbarmannschaft sieht bei `team` nichts, bei `department` Punkte, aber keine Trainingsnotizen oder Fotos; Mitglied einer anderen Abteilung sieht erst bei `organization` etwas; vom Verein verbindlich gesetztes `organization` ist von der Mannschaft nicht zu verengen, nach Freigabe schon
 - Punkte mit Spieler einer anderen Mannschaft oder nicht wirksamer Kategorie werden abgelehnt
 - Vererbung: Saisonbeginn verbindlich/freigegeben/von der Abteilung wieder gesperrt; `team_categories_allowed = false` auf Vereinsebene schlägt `true` darunter
-- Öffentliche Funktionen liefern nichts, wenn Schalter, `public_sharing_allowed` oder Modul fehlen; die Ausgabe enthält nie Vor- oder Nachnamen, IDs, Geburtsjahre, E-Mails oder Notizen (Test sucht die Klarnamen der Testpersonen im JSON); Fotos mit `public = false`, ausstehender/gescheiterter Einwilligungsprüfung, unvollständiger Personenliste oder ungültiger Einwilligung erscheinen nicht
+- Öffentliche Funktionen liefern nichts, wenn Schalter, `public_sharing_allowed` oder Modul fehlen; Spielernamen entsprechen der Mannschaftseinstellung, IDs, Geburtsjahre, E-Mails oder Notizen werden nie ausgegeben; Fotos mit `public = false`, ausstehender/gescheiterter Einwilligungsprüfung, unvollständiger Personenliste oder ungültiger Einwilligung erscheinen nicht
 
 ### PR 2 – Domain, Verträge, API
 
@@ -321,7 +323,7 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 - `/playerboard/kader`: Spieler neu anlegen (Name, optional Geburtsjahr, Rückennummer, Position, E-Mail) oder aus dem Verzeichnis der Mannschaft übernehmen; E-Mail später ergänzen; „Einladen“ jederzeit, sobald eine E-Mail vorliegt
 - `/playerboard/trainings`, `/playerboard/trainings/neu`, `/playerboard/trainings/[id]`: mobile Punkteeingabe aus playerboard übernehmen (Zielgruppe ist der Platzrand: ≥ 44 px Touchziele, 360 px Breite), Fotos, Einwilligungshinweis
 - `/playerboard/kategorien`: eigene und geerbte Kategorien, geerbte schreibgeschützt mit Herkunftsebene
-- `/playerboard/einstellungen`: Saisonbeginn, Sichtbarkeit der Werte (`stats_visibility`), Freigaben, öffentliche Mannschaftsseite (drei Schalter, Link zum Teilen, Liste der Spieler ohne Einwilligung für öffentliche Fotos) — Zustände **geerbt**, **eigener Wert**, **gesperrt** wie `PolicyFlagToggles.vue`
+- `/playerboard/einstellungen`: Saisonbeginn, Sichtbarkeit der Werte (`stats_visibility`), Freigaben, öffentliche Mannschaftsseite (Datenbereich-Schalter, Namensanzeige, automatisch generierter Link zum Teilen, Liste der Spieler ohne Einwilligung für öffentliche Fotos) — Zustände **geerbt**, **eigener Wert**, **gesperrt** wie `PolicyFlagToggles.vue`
 
 ### PR 4 – Spieleransicht, Rangliste, Übersicht
 
@@ -341,16 +343,16 @@ Seiten unter `/playerboard/` im Modul-Registry aus 051, Mannschaft aus dem aktiv
 
 - pgTAP wie unter PR 1, nach frischem `supabase db reset`.
 - API-Tests je Route inklusive `403 module_disabled` und `403 forbidden` für `player` auf Schreibrouten.
-- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Mannschaftsseite ohne Anmeldung aufrufen: nur „#Nr Initialen“, keine Klarnamen; Fotos nur bei eingeschaltetem Schalter, `approved`-Einwilligungsprüfung, vollständiger Personenliste und ohne ausgenommene Fotos.
+- Playwright auf 360 px Breite: Training anlegen, Punkte für zehn Spieler erfassen, speichern, als `player` Rangliste prüfen, öffentliche Mannschaftsseite ohne Anmeldung aufrufen: die drei Namensformate korrekt anzeigen; IDs, Geburtsjahre, E-Mails und Notizen bleiben verborgen. Fotos nur bei eingeschaltetem Schalter, `approved`-Einwilligungsprüfung, vollständiger Personenliste und ohne ausgenommene Fotos.
 - `pnpm lint`, `typecheck`, `test`, `build`, `db:test` grün.
 
 ## Risiken und offene Entscheidungen
 
-- **Initialen sind kein vollständiger Schutz.** In einer kleinen Mannschaft lassen „#7 M. K.“ und ein öffentliches Foto auf eine Person schließen. Das ist mit der Betreiberentscheidung bewusst in Kauf genommen. Die Vereinsebene kann `public_sharing_allowed` jederzeit für alle abschalten.
+- **Öffentliche Spielernamen sind personenbezogene Daten.** Die vollständige Namensanzeige ist eine bewusste zusätzliche Offenlegung; in kleinen Mannschaften können auch Vorname, Initialen und Rückennummer eine Person erkennen lassen. Die Vereinsebene kann `public_sharing_allowed` jederzeit für alle abschalten.
 - **Bewertungsdaten von Kindern in der Verarbeitungsdokumentation.** Punkte und Veo-Werte sind bewusst offen (siehe „Sichtbarkeit der Werte“). Sie gehören trotzdem als eigene Verarbeitung mit Zweck „Trainingsbewertung und Spielanalyse“ in die Verarbeitungsdokumentation (Paket 020), samt der gewählten `stats_visibility`.
 - **`team_manager` als einzige Trainerrolle.** Wer nur Punkte erfassen, aber keine Beiträge schreiben soll (Co-Trainer), bekommt dieselbe Rolle. Bei Bedarf später eine Team-Rolle `coach` mit nur `training.*`.
 
-Entschieden (Betreiber, 2026-10-05/06): kein Elternkontakt und keine Elternkonten; Trainer legen Spieler selbst an, E-Mail optional, Einladung jederzeit; Punkte und Veo-Werte innerhalb der Mannschaft für alle sichtbar, vereinsintern darüber hinaus je Ebene über `stats_visibility`; öffentliche Mannschaftsseite mit Rückennummer und Initialen, Fotos auf Wunsch des Trainers.
+Entschieden (Betreiber, 2026-10-05/06 und 2026-11-17): kein Elternkontakt und keine Elternkonten; Trainer legen Spieler selbst an, E-Mail optional, Einladung jederzeit; Punkte und Veo-Werte innerhalb der Mannschaft für alle sichtbar, vereinsintern darüber hinaus je Ebene über `stats_visibility`; öffentliche Mannschaftsseite mit teambezogener Auswahl aus Initialen, Vorname plus Nachnamensinitiale oder vollständigem Namen. Die öffentliche Ausgabe vollständiger Namen ist eine bewusste zusätzliche Offenlegung personenbezogener Daten; die Vereins- und Abteilungsregeln für öffentliche Freigabe bleiben maßgeblich. Die Adresse wird automatisch aus Vereins-, Abteilungs- und Mannschaftsnamen gebildet und ist pro Mannschaft eindeutig.
 
 ## Umsetzung PR 1: Ergebnis und Abweichungen vom Plan
 

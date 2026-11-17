@@ -382,7 +382,7 @@ describe('PlayerBoard coach flows', () => {
 
   it('rejects public team page settings outside a team', async () => {
     const app = await startApp({ roleProvider: rolesProvider(['organization_admin']), supabaseClients: clients() })
-    const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'organization', scopeId: ORGANIZATION_ID, patch: { publicSlug: 'u13' } })
+    const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'organization', scopeId: ORGANIZATION_ID, patch: { publicPlayerNameFormat: 'initials' } })
     expect(response.statusCode).toBe(400)
   })
 
@@ -392,7 +392,8 @@ describe('PlayerBoard coach flows', () => {
     const SETTINGS_ID = '52000000-8000-4000-8000-000000000001'
     const teamSettings = {
       scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [],
-      team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13',
+      team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null,
+      public_player_name_format: 'initials', public_slug: 'sv-beispiel-fussball-u13-52000000-8000-4000-8000-000000000001',
     }
 
     /** Erste Suche findet keine Zeile, die zweite die inzwischen angelegte; der Insert scheitert mit insertError. */
@@ -425,19 +426,18 @@ describe('PlayerBoard coach flows', () => {
       const updates: unknown[] = []
       const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_team_unique"' }, updates)
       const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
-      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicPlayerNameFormat: 'full_name' } })
       expect(response.statusCode).toBe(200)
-      expect(updates).toEqual([expect.objectContaining({ public_slug: 'u13' })])
+      expect(updates).toEqual([expect.objectContaining({ public_player_name_format: 'full_name' })])
     })
 
-    it('still reports a slug used by another team', async () => {
+    it('retries a generated slug conflict and writes the team name format', async () => {
       const updates: unknown[] = []
       const fakes = racingClients({ code: '23505', message: 'duplicate key value violates unique constraint "playerboard_settings_organization_id_public_slug_key"' }, updates)
       const app = await startApp({ roleProvider: rolesProvider(['team_manager']), supabaseClients: fakes })
-      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicSlug: 'u13' } })
-      expect(response.statusCode).toBe(409)
-      expect(response.json()).toMatchObject({ error: 'public_slug_taken' })
-      expect(updates).toEqual([])
+      const response = await call(app, 'PUT', '/v1/playerboard/settings', { scope: 'team', scopeId: TEAM_ID, patch: { publicPlayerNameFormat: 'first_name_last_initial' } })
+      expect(response.statusCode).toBe(200)
+      expect(updates).toEqual([expect.objectContaining({ public_player_name_format: 'first_name_last_initial' })])
     })
   })
 
@@ -485,7 +485,7 @@ describe('PlayerBoard coach flows', () => {
   })
 
   it('returns the share path of a team with a public slug', async () => {
-    const empty = { public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null }
+    const empty = { public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_player_name_format: 'initials', public_slug: null }
     const app = await startApp({
       roleProvider: rolesProvider(['team_manager']),
       supabaseClients: clients({
@@ -496,7 +496,7 @@ describe('PlayerBoard coach flows', () => {
           teams: [{ id: TEAM_ID, name: 'U13', department_id: DEPARTMENT_ID }],
           playerboard_settings: [
             { scope: 'organization', department_id: null, team_id: null, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty },
-            { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty, public_slug: 'u13' },
+            { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, ...empty, public_slug: `fussball-u13-${TEAM_ID}` },
           ],
         },
       }),
@@ -504,7 +504,7 @@ describe('PlayerBoard coach flows', () => {
     const response = await call(app, 'GET', `/v1/organizations/${ORGANIZATION_ID}/playerboard/settings`)
     expect(response.statusCode).toBe(200)
     const entries = response.json() as { scope: string; publicPath: string | null; canEdit: boolean }[]
-    expect(entries.map((entry) => [entry.scope, entry.publicPath])).toEqual([['organization', null], ['department', null], ['team', '/mannschaft/sv-beispiel/u13']])
+    expect(entries.map((entry) => [entry.scope, entry.publicPath])).toEqual([['organization', null], ['department', null], ['team', `/mannschaft/sv-beispiel/fussball-u13-${TEAM_ID}`]])
   })
 })
 
@@ -516,8 +516,8 @@ describe('PlayerBoard public team page', () => {
       serviceTables: {
         organizations: { id: ORGANIZATION_ID, timezone: 'Europe/Berlin' },
         playerboard_settings: [
-          { scope: 'organization', department_id: null, team_id: null, season_start: '2024-08-01', stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: null },
-          { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: true, public_veo_stats_enabled: null, public_photos_enabled: null, public_slug: 'u13' },
+          { scope: 'organization', department_id: null, team_id: null, season_start: '2024-08-01', stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: null, public_veo_stats_enabled: null, public_photos_enabled: null, public_player_name_format: 'initials', public_slug: null },
+          { scope: 'team', department_id: DEPARTMENT_ID, team_id: TEAM_ID, season_start: null, stats_visibility: null, overridable_fields: [], team_categories_allowed: null, public_sharing_allowed: null, public_trainings_enabled: null, public_points_enabled: true, public_veo_stats_enabled: null, public_photos_enabled: null, public_player_name_format: 'initials', public_slug: 'u13' },
         ],
         organization_brand_profiles: { primary_color: '#0b3d91', accent_color: '#ffcc00', allow_department_overrides: true, locked_fields: [] },
         department_brand_profiles: null,

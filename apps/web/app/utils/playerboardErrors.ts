@@ -20,7 +20,6 @@ const messages: Readonly<Record<string, string>> = {
   resend_rate_limited: 'An diese Adresse gingen schon zu viele Einladungen. Versuche es später erneut.',
   team_categories_not_allowed: 'Eigene Kategorien der Mannschaft sind von einer höheren Ebene nicht erlaubt.',
   category_in_use: 'Die Kategorie hat bereits Punkte. Deaktiviere sie stattdessen.',
-  public_slug_taken: 'Diese Adresse ist im Verein schon vergeben.',
   storage_limit_reached: 'Der Speicherplatz ist aufgebraucht. Lösche alte Fotos oder erweitere den Tarif.',
   upload_missing: 'Die Datei ist nicht vollständig angekommen. Bitte noch einmal hochladen.',
   invalid_upload_size: 'Die Datei ist leer oder beschädigt.',

@@ -45,6 +45,7 @@ function buildEntry(
       publicPointsEnabled: own?.public_points_enabled ?? null,
       publicVeoStatsEnabled: own?.public_veo_stats_enabled ?? null,
       publicPhotosEnabled: own?.public_photos_enabled ?? null,
+      publicPlayerNameFormat: own?.public_player_name_format ?? 'initials',
       publicSlug: own?.public_slug ?? null,
     },
     effective: {
@@ -67,7 +68,7 @@ const patchColumns: Readonly<Record<string, string>> = {
   publicPointsEnabled: 'public_points_enabled',
   publicVeoStatsEnabled: 'public_veo_stats_enabled',
   publicPhotosEnabled: 'public_photos_enabled',
-  publicSlug: 'public_slug',
+  publicPlayerNameFormat: 'public_player_name_format',
 }
 
 /**
@@ -126,14 +127,11 @@ export function registerPlayerboardSettingsRoutes(app: FastifyInstance, context:
             organization_id: scope.organizationId, scope: input.scope, department_id: scope.departmentId ?? null, team_id: scope.teamId ?? null, ...values,
           }).select('id')
     }
-    // 23505 kommt vom Slug (playerboard_settings_organization_id_public_slug_key) oder vom
-    // Unique-Index der Ebene. Letzteres heisst: eine gleichzeitige erste Speicherung hat die Zeile
-    // eben angelegt -- dann in diese schreiben, statt faelschlich "Slug vergeben" zu melden.
-    const isSlugConflict = (error: { code?: string; message?: string }) => error.code === '23505' && (error.message ?? '').includes('public_slug')
+    // Eine gleichzeitige erste Speicherung kann den Unique-Index der Ebene treffen. Dann wurde
+    // die Zeile parallel angelegt; der zweite Versuch schreibt in diese vorhandene Zeile.
     let write = await writeLevelRow()
-    if (write.error?.code === '23505' && !isSlugConflict(write.error)) write = await writeLevelRow()
+    if (write.error?.code === '23505') write = await writeLevelRow()
     if (write.error) {
-      if (isSlugConflict(write.error)) return reply.code(409).send({ error: 'public_slug_taken', correlationId: request.id })
       if (sendDatabaseError(request, reply, write.error)) return
       throw write.error
     }

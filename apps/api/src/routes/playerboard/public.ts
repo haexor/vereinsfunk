@@ -25,7 +25,8 @@ const PUBLIC_PHOTO_URL_SECONDS = 300
 /**
  * Paket 052: oeffentliche Mannschaftsseite ohne Anmeldung (Muster oeffentliches Impressum, Paket 020).
  * Alles laeuft ueber security-definer-Funktionen, die nur service_role ausfuehren darf; sie pruefen
- * Schalter, public_sharing_allowed und Modul selbst und geben Spieler nur als "#7 M. K." aus.
+ * Schalter, public_sharing_allowed und Modul selbst und geben Spielernamen im eingestellten Format
+ * aus, ohne weitere Personenfelder offenzulegen.
  */
 export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: ApiRouteContext): void {
   const { supabaseClients, checkRateLimit } = context
@@ -134,7 +135,7 @@ export function registerPlayerboardPublicRoutes(app: FastifyInstance, context: A
     })))
   })
 
-  // Paket 053: Spiele mit Mannschafts- und Spielerwerten, Spieler nur als "#7 M. K.".
+  // Paket 053: Spiele mit Mannschafts- und Spielerwerten im teambezogenen Namensformat.
   app.get('/v1/public/playerboard/:orgSlug/:teamSlug/veo', async (request, reply) => {
     const team = await loadTeam(request, reply)
     if (!team) return

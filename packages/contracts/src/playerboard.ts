@@ -185,6 +185,8 @@ export const PlayerboardRankingEntrySchema = z.object({
 
 // --- Einstellungen ------------------------------------------------------------------------------
 
+export const PlayerboardPublicNameFormatSchema = z.enum(['initials', 'first_name_last_initial', 'full_name'])
+
 export const PlayerboardSettingsValuesSchema = z.object({
   seasonStart: DateSchema.nullable(),
   statsVisibility: PlayerboardStatsVisibilitySchema.nullable(),
@@ -196,6 +198,8 @@ export const PlayerboardSettingsValuesSchema = z.object({
   publicPointsEnabled: z.boolean().nullable(),
   publicVeoStatsEnabled: z.boolean().nullable(),
   publicPhotosEnabled: z.boolean().nullable(),
+  publicPlayerNameFormat: PlayerboardPublicNameFormatSchema,
+  // Read-only: wird aus Vereins-, Abteilungs- und Mannschaftsnamen abgeleitet.
   publicSlug: z.string().nullable(),
 })
 
@@ -216,11 +220,9 @@ export const ScopePlayerboardSettingsSchema = z.object({
   // Ersetzbare Felder, die auf dieser Ebene keine Wirkung haben, weil oben verbindlich gesetzt.
   locked: z.object({ seasonStart: z.boolean(), statsVisibility: z.boolean() }),
   canEdit: z.boolean(),
-  // Nur Mannschaft mit Slug: Pfad der oeffentlichen Mannschaftsseite (/mannschaft/{verein}/{mannschaft}).
+  // Nur Mannschaft mit generiertem Slug: /mannschaft/{verein}/{abteilung-mannschaft-id}.
   publicPath: z.string().nullable(),
 })
-
-const PublicSlugSchema = z.string().trim().toLowerCase().max(80).regex(/^[a-z0-9]+(?:-[a-z0-9]+)*$/)
 
 export const UpdatePlayerboardSettingsRequestSchema = z.object({
   scope: ScopeLevelSchema,
@@ -236,10 +238,10 @@ export const UpdatePlayerboardSettingsRequestSchema = z.object({
     publicPointsEnabled: z.boolean().nullable(),
     publicVeoStatsEnabled: z.boolean().nullable(),
     publicPhotosEnabled: z.boolean().nullable(),
-    publicSlug: PublicSlugSchema.nullable(),
+    publicPlayerNameFormat: PlayerboardPublicNameFormatSchema,
   }).partial().strict().refine((value) => Object.keys(value).length > 0, { message: 'at least one field must be provided' }),
 }).strict().superRefine((value, context) => {
-  const teamOnly = ['publicTrainingsEnabled', 'publicPointsEnabled', 'publicVeoStatsEnabled', 'publicPhotosEnabled', 'publicSlug'] as const
+  const teamOnly = ['publicTrainingsEnabled', 'publicPointsEnabled', 'publicVeoStatsEnabled', 'publicPhotosEnabled', 'publicPlayerNameFormat'] as const
   if (value.scope !== 'team' && teamOnly.some((field) => value.patch[field] !== undefined && value.patch[field] !== null)) {
     context.addIssue({ code: 'custom', message: 'public team page settings exist only on a team' })
   }
@@ -447,7 +449,7 @@ export const PlayerboardVeoMatchSchema = VeoMatchBaseSchema.extend({
     stats: z.array(PlayerboardVeoStatSchema),
   })),
 })
-// Oeffentlich: keine IDs, Spieler nur als "#7 M. K." bzw. "#7".
+// Oeffentlich: keine IDs; das Label folgt dem konfigurierten Mannschaftsformat.
 export const PublicPlayerboardVeoMatchSchema = VeoMatchBaseSchema.extend({
   players: z.array(z.object({
     jerseyNumber: z.number().int(),
