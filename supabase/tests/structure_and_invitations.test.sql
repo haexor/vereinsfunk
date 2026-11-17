@@ -1,6 +1,6 @@
 begin;
 create extension if not exists pgtap with schema extensions;
-select plan(61);
+select plan(62);
 
 set local role postgres;
 
@@ -130,6 +130,11 @@ set local role postgres;
 select is(
   (select slug from public.departments where organization_id = '60000000-1000-4000-8000-000000000001' and name = 'Fussball' and slug <> 'fussball'),
   'fussball-1', 'a colliding department name gets a suffixed, unique slug'
+);
+select public.create_department('60000000-1000-4000-8000-000000000001', 'Fußball');
+select is(
+  (select slug from public.departments where organization_id = '60000000-1000-4000-8000-000000000001' and name = 'Fußball'),
+  'fussball-2', 'a sharp s in a department name becomes ss in the slug'
 );
 
 -- 11-13: invitations_role_matches_scope rejects organization_owner and scope/role mismatches.
