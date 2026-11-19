@@ -44,12 +44,15 @@ const MAX_REPORTED_ISSUES = 5
 
 /**
  * Fasst Zod-Probleme als "pfad: meldung" zusammen, damit ein upstream_changed zeigt, WELCHES Feld
- * sich geaendert hat. Listenindizes werden zu "[]" und doppelte Probleme zusammengelegt. Zod nennt
- * in diesen Meldungen nur Typen und Grenzen, nie den empfangenen Wert; es gelangen also keine
- * Veo-Daten ins Log.
+ * sich geaendert hat. Listenindizes werden zu "[]" und doppelte Probleme zusammengelegt. Beim
+ * player tracking wird auch der erste Pfadabschnitt maskiert, weil er ein dynamischer Record-Key
+ * ist. Zod nennt in diesen Meldungen Typen und Grenzen, nie empfangene Werte.
  */
-export function describeIssues(error: z.ZodError): string {
-  const issues = new Set(error.issues.map((issue) => `${issue.path.map((segment) => (typeof segment === 'number' ? '[]' : `.${String(segment)}`)).join('').replace(/^\./, '') || '(root)'}: ${issue.message}`))
+export function describeIssues(error: z.ZodError, maskFirstPathSegment = false): string {
+  const issues = new Set(error.issues.map((issue) => `${issue.path.map((segment, index) => {
+    if (typeof segment === 'number' || (maskFirstPathSegment && index === 0)) return '[]'
+    return `.${String(segment)}`
+  }).join('').replace(/^\./, '') || '(root)'}: ${issue.message}`))
   const shown = [...issues].slice(0, MAX_REPORTED_ISSUES).join('; ')
   return issues.size > MAX_REPORTED_ISSUES ? `${shown}; +${issues.size - MAX_REPORTED_ISSUES} more` : shown
 }
@@ -57,7 +60,7 @@ export function describeIssues(error: z.ZodError): string {
 /** Prueft eine Antwort gegen ihr Schema; eine geaenderte Form ergibt upstream_changed mit den abweichenden Feldern. */
 export function parseOrChanged<T>(schema: z.ZodType<T>, json: unknown, what: string): T {
   const parsed = schema.safeParse(json)
-  if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo ${what} response shape: ${describeIssues(parsed.error)}`)
+  if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo ${what} response shape: ${describeIssues(parsed.error, what === 'player tracking')}`)
   return parsed.data
 }
 

@@ -218,6 +218,17 @@ describe('player tracking', () => {
     expect(() => parseTrackingWindow({ abc: [[1, 1, 0.5, 0.5, 7, 0, 0, 0]] })).toThrowError(expect.objectContaining({ code: 'upstream_changed' }))
   })
 
+  it('does not include an invalid dynamic record key in the error message', () => {
+    let message = ''
+    try {
+      parseTrackingWindow({ 'Max Mustermann': [[1, 1, 0.5, 0.5, 7, 0, 0, 0]] })
+    } catch (error) {
+      message = (error as Error).message
+    }
+    expect(message).not.toContain('Max Mustermann')
+    expect(message).toContain('[]')
+  })
+
   it('asks for a whole-second window start and treats 404 as no data', async () => {
     const { fetch, calls } = fakeFetch(json({}, 404))
     expect(await fetchTrackingWindow('token', 'm', 605.7, { fetch })).toEqual([])

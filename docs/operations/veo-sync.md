@@ -1,16 +1,18 @@
 # Veo-Sync: Fehler eingrenzen
 
-Veo hat keine offizielle API. `packages/veo-client` prüft jede Antwort mit einem Zod-Schema; passt
-die Form nicht mehr, endet der Lauf mit `upstream_changed` und schreibt nichts. Das ist gewollt
-(lieber kein Wert als ein falscher), heißt aber: Ändert Veo eine Antwort, fällt der Nacht-Sync
-(05:00 UTC) komplett aus, bis das Schema nachgezogen ist.
+Veo hat keine offizielle API. `packages/veo-client` prüft jede Antwort mit einem Zod-Schema. Passt
+die Form nicht mehr, wird die nicht lesbare Antwort nicht übernommen. Bereits durch `applyMatch`
+gespeicherte Werte bleiben bestehen; der Worker markiert den Lauf als `failed` und führt keinen
+Rollback der vorherigen Schreibvorgänge aus. Der Nacht-Sync (05:00 UTC) kann bis zur Schema-Anpassung
+an derselben Veo-Antwort scheitern.
 
 ## Wo der Fehler sichtbar wird
 
 - `playerboard_veo_links.last_error_code` und `consecutive_failures`; ab dem dritten Fehlversuch
   geht eine Mail an die Trainer.
 - `integration_sync_runs.error_class` und `progress` je Lauf. `progress.matchesDone = 0` bei
-  `matchesTotal > 0` heißt: Anmeldung und Spieleliste gingen, der erste Spiel-Abruf scheiterte.
+  `matchesTotal > 0` heißt: Anmeldung und Spieleliste gingen, aber der erste Spiel-Abruf oder eine
+  anschließende Analyse brach ab. Bei einem Analysefehler können Matchdaten bereits gespeichert sein.
 - Worker-Log (`docker logs vereinsfunk-worker`), Meldung `veo sync failed` bzw.
   `veo match skipped` / `veo analysis skipped`. Felder:
 
