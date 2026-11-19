@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from 'node:crypto'
 import { z } from 'zod'
+import { describeIssues } from './client.js'
 import { VeoError } from './errors.js'
 import { veoRequest, type VeoHttpOptions } from './http.js'
 
@@ -78,7 +79,7 @@ export async function exchangeSessionCookieForToken(sessionCookie: string, optio
   if (token.status === 400 || token.status === 401) throw new VeoError('auth_expired', `Veo token exchange rejected: ${token.status}`, token.status)
   if (!token.ok) throw new VeoError('upstream_error', `Veo token exchange failed: ${token.status}`, token.status)
   const parsed = TokenResponseSchema.safeParse(await token.json().catch(() => null))
-  if (!parsed.success) throw new VeoError('upstream_changed', 'Unexpected Veo token response shape')
+  if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo token response shape: ${describeIssues(parsed.error)}`)
   return {
     accessToken: parsed.data.access_token,
     expiresAt: new Date(Date.now() + Math.max(0, parsed.data.expires_in - 60) * 1000),

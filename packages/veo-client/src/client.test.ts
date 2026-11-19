@@ -112,6 +112,28 @@ describe('team stats', () => {
     expect(() => parseTeamStats({ data: [] })).toThrowError(expect.objectContaining({ code: 'upstream_changed' }))
   })
 
+  // Veo lieferte ab 2026-11-17 Kommazahlen; das alte Integer-Schema liess den Sync ab dem ersten Spiel scheitern.
+  it('accepts fractional values, also per period', () => {
+    const rows = parseTeamStats({ items: [{ match_id: 'm', team_association: 'own', stats: [{ type: 'a', category: { id: 'physical' }, value: 52.5, periods: [{ period: 1, value: 48.25 }] }] }] })
+    expect(rows[0]).toMatchObject({ value: 52.5, periodValues: [{ period: 1, value: 48.25 }] })
+  })
+
+  it('names the changed field in the error, but never the received value', () => {
+    const stat = (value: unknown) => ({ items: [{ match_id: 'm', team_association: 'own', stats: [{ type: 'a', category: { id: 'x' }, value, periods: [] }] }] })
+    let message = ''
+    try { parseTeamStats(stat('very-secret-value')) } catch (error) { message = (error as Error).message }
+    expect(message).toContain('Unexpected Veo team stats response shape')
+    expect(message).toContain('items[].stats[].value')
+    expect(message).not.toContain('very-secret-value')
+  })
+
+  it('reports each changed field once and caps the list', () => {
+    const items = Array.from({ length: 30 }, () => ({ match_id: 1, team_association: 'own', stats: [] }))
+    let message = ''
+    try { parseTeamStats({ items }) } catch (error) { message = (error as Error).message }
+    expect(message.match(/items\[\]\.match_id/g)).toHaveLength(1)
+  })
+
   it('requests all matches of one Veo team grouped by team association', async () => {
     const { fetch, calls } = fakeFetch(json({ items: [] }))
     await fetchTeamStats('token', { veoTeamId: 'team', veoMatchIds: ['m1', 'm2'] }, { fetch })

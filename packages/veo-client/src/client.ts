@@ -40,10 +40,24 @@ export async function veoApiOk(accessToken: string, path: string, init: RequestI
   return result.json
 }
 
-/** Prueft eine Antwort gegen ihr Schema; eine geaenderte Form ergibt upstream_changed. */
+const MAX_REPORTED_ISSUES = 5
+
+/**
+ * Fasst Zod-Probleme als "pfad: meldung" zusammen, damit ein upstream_changed zeigt, WELCHES Feld
+ * sich geaendert hat. Listenindizes werden zu "[]" und doppelte Probleme zusammengelegt. Zod nennt
+ * in diesen Meldungen nur Typen und Grenzen, nie den empfangenen Wert; es gelangen also keine
+ * Veo-Daten ins Log.
+ */
+export function describeIssues(error: z.ZodError): string {
+  const issues = new Set(error.issues.map((issue) => `${issue.path.map((segment) => (typeof segment === 'number' ? '[]' : `.${String(segment)}`)).join('').replace(/^\./, '') || '(root)'}: ${issue.message}`))
+  const shown = [...issues].slice(0, MAX_REPORTED_ISSUES).join('; ')
+  return issues.size > MAX_REPORTED_ISSUES ? `${shown}; +${issues.size - MAX_REPORTED_ISSUES} more` : shown
+}
+
+/** Prueft eine Antwort gegen ihr Schema; eine geaenderte Form ergibt upstream_changed mit den abweichenden Feldern. */
 export function parseOrChanged<T>(schema: z.ZodType<T>, json: unknown, what: string): T {
   const parsed = schema.safeParse(json)
-  if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo ${what} response shape`)
+  if (!parsed.success) throw new VeoError('upstream_changed', `Unexpected Veo ${what} response shape: ${describeIssues(parsed.error)}`)
   return parsed.data
 }
 
@@ -161,7 +175,8 @@ const TeamStatsSchema = z.object({
     stats: z.array(z.object({
       type: z.string().min(1),
       category: z.object({ id: z.string().min(1) }),
-      value: z.number().int(),
+      // Seit 2026-11-17 liefert Veo auch Kommazahlen (z. B. Anteile); die Spalte ist numeric.
+      value: z.number(),
       periods: z.array(z.object({ period: z.number().int(), value: z.number() })),
     })),
   })),
