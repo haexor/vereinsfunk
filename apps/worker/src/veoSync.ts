@@ -130,9 +130,18 @@ export function needsAnalysis(candidate: VeoAnalysisCandidate | undefined, match
 
 const RUN_ABORTING_CODES = new Set(['auth_expired', 'upstream_changed'])
 
-/** HTTP-Status eines Veo-Fehlers fuers Log; nie Inhalte der Antwort. */
-function errorStatus(error: unknown): number | undefined {
-  return error instanceof VeoError ? error.status : undefined
+/**
+ * Log-Felder eines Fehlers. Die Meldung eines VeoError nennt Endpunkt und abweichende Felder
+ * (Pfad und Typ, nie Werte der Antwort) und wird mitgeschrieben, damit ein upstream_changed ohne
+ * erneuten Abruf zeigt, was sich bei Veo geaendert hat. Meldungen anderer Fehler (Datenbank,
+ * Laufzeit) koennen Inhalte enthalten und bleiben draussen.
+ */
+function errorFields(error: unknown): { status: number | undefined; errorName: string; errorMessage?: string } {
+  return {
+    status: error instanceof VeoError ? error.status : undefined,
+    errorName: error instanceof Error ? error.name : 'unknown',
+    ...(error instanceof VeoError ? { errorMessage: error.message } : {}),
+  }
 }
 
 /** Text des Hinweises an den Trainer, je nach Grund der Fehlerserie. */
@@ -198,6 +207,8 @@ export class VeoSyncExecutor {
     const http = { fetch: this.options.fetch }
     let analysisFailed = false
     let analysisDeferred = 0
+    // Nur fuers Log: bei einem abbrechenden Fehler zeigt es, an welchem Spiel der Lauf endete.
+    let currentMatchId: string | undefined
     const startedAt = (this.options.now ?? (() => new Date()))().getTime()
     const progress = this.progressReporter(runId)
     try {
@@ -213,6 +224,7 @@ export class VeoSyncExecutor {
           outcome.skipped += 1
           continue
         }
+        currentMatchId = match.veoMatchId
         progress.state.current = { opponentName: match.opponentName.slice(0, 200), step: 'values' }
         await progress.report(true)
         try {
@@ -245,7 +257,7 @@ export class VeoSyncExecutor {
           outcome.skipped += 1
           outcome.status = 'failed'
           outcome.errorClass ??= error instanceof VeoError ? error.code : 'apply_failed'
-          this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo match skipped')
+          this.options.log({ runId, errorClass: outcome.errorClass, veoMatchId: match.veoMatchId, step: progress.state.current?.step, ...errorFields(error) }, 'veo match skipped')
         }
         progress.state.matchesDone += 1
         progress.state.current = null
@@ -254,7 +266,7 @@ export class VeoSyncExecutor {
     } catch (error) {
       outcome.status = 'failed'
       outcome.errorClass = error instanceof VeoError ? error.code : 'internal_error'
-      this.options.log({ runId, errorClass: outcome.errorClass, status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo sync failed')
+      this.options.log({ runId, errorClass: outcome.errorClass, step: progress.state.current?.step ?? 'list', veoMatchId: currentMatchId, ...errorFields(error) }, 'veo sync failed')
     }
     if (progress.state.current) {
       // Ein abgebrochener Lauf hat kein Spiel mehr in Arbeit; der Rest des Stands bleibt fuer die Liste.
@@ -305,7 +317,7 @@ export class VeoSyncExecutor {
       if (error instanceof VeoError && RUN_ABORTING_CODES.has(error.code)) throw error
       outcome.status = 'failed'
       outcome.errorClass ??= error instanceof VeoError ? error.code : 'analysis_failed'
-      this.options.log({ runId, errorClass: error instanceof VeoError ? error.code : 'analysis_failed', status: errorStatus(error), errorName: error instanceof Error ? error.name : 'unknown' }, 'veo analysis skipped')
+      this.options.log({ runId, errorClass: error instanceof VeoError ? error.code : 'analysis_failed', veoMatchId: match.veoMatchId, ...errorFields(error) }, 'veo analysis skipped')
       return null
     }
   }

@@ -52,6 +52,8 @@ type RunRow = {
 /** Uebersetzt einen Fehler aus dem Veo-Client in eine fachliche Antwort; andere Fehler gehen weiter. */
 function sendVeoError(request: FastifyRequest, reply: FastifyReply, error: unknown): boolean {
   if (!(error instanceof VeoError)) return false
+  // Meldung nennt Endpunkt und abweichende Felder, nie Zugangsdaten oder Antwortwerte (siehe veo-client).
+  request.log.warn({ errorClass: error.code, status: error.status, errorMessage: error.message }, 'veo request failed')
   if (error.code === 'login_failed' || error.code === 'auth_expired') {
     reply.code(422).send({ error: 'veo_login_failed', correlationId: request.id })
   } else {

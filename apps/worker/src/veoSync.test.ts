@@ -222,7 +222,7 @@ describe('VeoSyncExecutor', () => {
     expect(analyses).toEqual([])
     expect(finished[0]).toMatchObject({ status: 'failed', errorClass: 'upstream_error', updated: 1 })
     expect(cleared).toEqual([])
-    expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorClass: 'upstream_error', status: 502, errorName: 'VeoError' }, message: 'veo analysis skipped' })
+    expect(logs).toContainEqual({ fields: { runId: RUN_ID, errorClass: 'upstream_error', veoMatchId: 'a', status: 502, errorName: 'VeoError', errorMessage: 'Veo request failed with HTTP 502' }, message: 'veo analysis skipped' })
   })
 
   it('does not clear a refresh when the database did not write the analysis', async () => {
@@ -279,6 +279,31 @@ describe('VeoSyncExecutor', () => {
     expect(veo.fetchTeamStats).toHaveBeenCalledTimes(3)
     expect(applied.map((write) => write.veoMatchId)).toEqual(['b'])
     expect(finished).toEqual([{ status: 'failed', errorClass: 'upstream_error', created: 0, updated: 1, skipped: 1, conflicts: 0 }])
+  })
+
+  it('logs which step, match and field a changed Veo response broke on', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    veo.fetchTeamStats.mockRejectedValue(new VeoError('upstream_changed', 'Unexpected Veo team stats response shape: items[].stats[].value: Invalid input: expected int, received number'))
+    const { repository, finished } = fakeRepository()
+    const { instance, logs } = executor(repository)
+    await instance.execute(payload)
+    expect(finished[0]).toMatchObject({ status: 'failed', errorClass: 'upstream_changed' })
+    expect(logs).toContainEqual({
+      fields: {
+        runId: RUN_ID, errorClass: 'upstream_changed', step: 'values', veoMatchId: 'a', status: undefined, errorName: 'VeoError',
+        errorMessage: 'Unexpected Veo team stats response shape: items[].stats[].value: Invalid input: expected int, received number',
+      },
+      message: 'veo sync failed',
+    })
+  })
+
+  it('does not log the message of a non-Veo error, which may carry data', async () => {
+    veo.listMatches.mockResolvedValue([match('a')])
+    veo.fetchTeamStats.mockRejectedValue(new Error('duplicate key value violates unique constraint (jersey 7, Max Mustermann)'))
+    const { repository } = fakeRepository()
+    const { instance, logs } = executor(repository)
+    await instance.execute(payload)
+    expect(JSON.stringify(logs)).not.toContain('Mustermann')
   })
 
   it('ends the run on an expired session and notifies the coach without leaking the cookie', async () => {
