@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "checked": {
-    "source_hash": "7dd27f6d57e3082870b50533572028177f8fd85e615fe17dde2818b0cb18ade0",
+    "source_hash": "c9695542ce11b9fcc5275f1a825de85e6395045cce088fed7a71407599f9c4c1",
     "prompt_hash": "aad1b9eb44b8d38d2bb92a30d9806c85710edad91159543012d0d3a0c686372a"
   },
   "decisions": {
@@ -67,6 +67,27 @@
       },
       "asked_at": "2026-11-22T23:29:17Z",
       "answered_at": "2026-11-22T23:29:17Z"
+    },
+    "b6dadf266fd0eea3f5e37be47f4285a9dd575938fb5f6a4f8cf16847617bce13": {
+      "kind": "duplicate",
+      "summary": "Both tell the agent to use the repository's configured formatter, linter, compiler and test runner rather than substituting its own tooling.",
+      "passages": [
+        {
+          "scoped_id": "com.github.haexmas.atoms.coding-guideline-javascript-typescript/javascript-typescript",
+          "text_hash": "106d86cfcc95a3b5f321ba459697f55ed81fc5a6fcce7be266fbda4f473ebc96",
+          "text": "- Use the project's configured formatter, linter, compiler, and test runner.\n  At minimum, TypeScript changes SHOULD pass `tsc --noEmit` (or the project's\n  equivalent), linting, formatting checks, and the relevant tests. Do not\n  replace repository tooling with a personal global installation."
+        },
+        {
+          "scoped_id": "com.github.haexmas.atoms.coding-guideline-javascript-typescript/javascript-typescript-testing",
+          "text_hash": "97074ebb728f453ad685be2ccfc045e2df689e7b7fa6e0a28e116c31dbf9c495",
+          "text": "- Use the repository's configured runner, environment, formatter, linter, and\n  compiler. A change should include relevant tests and pass the project's\n  normal test command; do not assume that a test file is discovered unless the\n  runner configuration confirms it."
+        }
+      ],
+      "choice": {
+        "kind": "keep_all"
+      },
+      "asked_at": "2026-11-24T07:47:06Z",
+      "answered_at": "2026-11-24T07:47:06Z"
     }
   }
 }
